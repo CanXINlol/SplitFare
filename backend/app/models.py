@@ -20,6 +20,9 @@ class Supplier(str, Enum):
     mock_sky = "MockSky"
     demo_air = "DemoAir"
     budget_demo = "BudgetDemo"
+    duffel = "Duffel"
+    skyscanner = "Skyscanner"
+    trip_com_affiliate = "TripComAffiliate"
 
 
 class ItineraryType(str, Enum):
@@ -46,6 +49,18 @@ class SortOption(str, Enum):
     cheapest = "cheapest"
 
 
+class VerificationStatus(str, Enum):
+    verified = "verified"
+    unavailable = "unavailable"
+    not_configured = "not_configured"
+
+
+class SearchStatus(str, Enum):
+    complete = "complete"
+    partial = "partial"
+    empty = "empty"
+
+
 class SearchRequest(ApiModel):
     origin: str = Field(pattern=r"^[A-Z]{3}$")
     destination: str = Field(pattern=r"^[A-Z]{3}$")
@@ -58,11 +73,20 @@ class SearchRequest(ApiModel):
     sort: SortOption = SortOption.value
     checked_baggage_likely_required: bool = False
     visa_transit_requirement_unknown: bool = True
+    currency: str = Field(default="AUD", pattern=r"^[A-Z]{3}$")
+    candidate_hubs: list[str] | None = Field(default=None, max_length=12)
 
-    @field_validator("origin", "destination", mode="before")
+    @field_validator("origin", "destination", "currency", mode="before")
     @classmethod
     def normalize_iata(cls, value: object) -> object:
         return value.strip().upper() if isinstance(value, str) else value
+
+    @field_validator("candidate_hubs", mode="before")
+    @classmethod
+    def normalize_hubs(cls, value: object) -> object:
+        if isinstance(value, list):
+            return [item.strip().upper() if isinstance(item, str) else item for item in value]
+        return value
 
     @model_validator(mode="after")
     def validate_search(self) -> SearchRequest:
@@ -70,6 +94,11 @@ class SearchRequest(ApiModel):
             raise ValueError("origin and destination must differ")
         if self.max_gap_hours < self.min_gap_hours:
             raise ValueError("max_gap_hours must be greater than or equal to min_gap_hours")
+        if self.candidate_hubs:
+            if any(len(hub) != 3 or not hub.isalpha() for hub in self.candidate_hubs):
+                raise ValueError("candidate hubs must be three-letter IATA codes")
+            if self.origin in self.candidate_hubs or self.destination in self.candidate_hubs:
+                raise ValueError("candidate hubs cannot equal origin or destination")
         return self
 
 
@@ -97,6 +126,44 @@ class Segment(ApiModel):
         if self.arrival_at <= self.departure_at:
             raise ValueError("arrival_at must be later than departure_at")
         return self
+
+
+class FlightSlice(ApiModel):
+    origin: str = Field(pattern=r"^[A-Z]{3}$")
+    destination: str = Field(pattern=r"^[A-Z]{3}$")
+    departure_date: date
+
+
+class PriceVerification(ApiModel):
+    offer_id: str
+    supplier: Supplier
+    status: VerificationStatus
+    price_amount: float | None = Field(default=None, gt=0)
+    currency: str | None = Field(default=None, pattern=r"^[A-Z]{3}$")
+    checked_at: datetime
+    message: str
+
+
+class SupplierFailure(ApiModel):
+    supplier: Supplier
+    error_type: str
+    message: str
+
+
+class FlightQuery(ApiModel):
+    origin: str = Field(pattern=r"^[A-Z]{3}$")
+    destination: str = Field(pattern=r"^[A-Z]{3}$")
+    departure_date: date
+    kind: str
+    hub: str | None = None
+
+
+class SearchError(ApiModel):
+    supplier: Supplier | None
+    origin: str | None
+    destination: str | None
+    code: str
+    message: str
 
 
 class NormalizedFlightOffer(ApiModel):
@@ -142,6 +209,11 @@ class NormalizedFlightOffer(ApiModel):
             if previous.destination != current.origin or previous.arrival_at >= current.departure_at:
                 raise ValueError("offer segments must form a chronological route")
         return self
+
+
+class SupplierSearchOutcome(ApiModel):
+    offers: list[NormalizedFlightOffer]
+    failures: list[SupplierFailure]
 
 
 class RiskAssessment(ApiModel):
@@ -226,13 +298,26 @@ class MatchingResult(ApiModel):
     ranked_results: list[Itinerary]
 
 
-class SearchResponse(ApiModel):
-    baseline: Itinerary | None
-    cheapest_split: Itinerary | None
-    safest_split: Itinerary | None
-    ranked: list[Itinerary] = Field(min_length=1)
+class SearchResults(ApiModel):
     protected_itineraries: list[Itinerary]
     split_ticket_itineraries: list[Itinerary]
     baseline_price: float | None
     ranked_results: list[Itinerary]
+
+
+class SearchResponse(ApiModel):
+    search_id: str
+    status: SearchStatus
+    results: SearchResults
+    errors: list[SearchError]
+    explanation: str
+    baseline: Itinerary | None
+    cheapest_split: Itinerary | None
+    safest_split: Itinerary | None
+    ranked: list[Itinerary]
+    protected_itineraries: list[Itinerary]
+    split_ticket_itineraries: list[Itinerary]
+    baseline_price: float | None
+    ranked_results: list[Itinerary]
+    supplier_failures: list[SupplierFailure] = Field(default_factory=list)
     disclaimer: str = Field(min_length=1)

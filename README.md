@@ -161,6 +161,79 @@ convenience 中 protected 为 1，同机场 self-transfer 为 0.75，超过 12 �
 
 `riskScore` 是帮助比较候选行程的一致性启发指标，不是安全、签证、入境、行李或衔接可行性的保证。默认 value 排序会把 extreme 结果放在所有非 extreme 结果之后；只有显式使用 `sort=cheapest` 时，extreme 低价结果才可能排在首位。
 
+## Phase 4 Supplier Adapter architecture
+
+所有 supplier 集成只能位于后端，并实现 `backend/app/adapters/base.py` 中的 `SupplierAdapter`：
+
+```text
+name
+search_one_way(origin, destination, date, passengers, cabin, currency)
+search_multi_city(slices, passengers, cabin, currency)  # optional
+normalize(raw_response)
+verify_price(offer_id)
+```
+
+`search_one_way()` 是基类控制的 template method：它先调用 adapter 的 `_fetch_one_way()` 获取 raw response，再强制调用 `normalize()`，因此 adapter 无法绕过 normalization 直接向 orchestrator 返回原始对象。optional multi-city 默认抛出明确的 capability error。
+
+当前 adapters：
+
+- `MockSupplierAdapter`：唯一返回航班与价格的实现；按 MockSky、DemoAir、BudgetDemo 分别实例化。
+- `DuffelSupplierAdapter`：无 token、无网络调用的 skeleton，返回 `not_configured` verification 状态。
+- `SkyscannerSupplierAdapter`：无 API client 的 skeleton。
+- `TripComAffiliateAdapter`：只生成 `example.invalid` 占位 tracking/deep link，不访问、抓取或解析 Trip.com 页面，也不生成价格。
+
+`SupplierOrchestrator` 逐个调用 adapters，将所有 `NormalizedFlightOffer` 合并并按 `(supplier, offer_id)` 去重。单个 adapter 抛错时只记录在 `supplierFailures`，其他 supplier 的结果继续进入 matcher。orchestrator 还会拒绝未 normalized 的返回值，以及 supplier 字段与 adapter name 不一致的报价。
+
+### Raw payload policy
+
+normalized offer 在后端保留 `raw_payload` 以便 adapter 调试，但普通响应会递归移除它：
+
+```text
+POST /api/search             # 不返回 rawPayload
+POST /api/search?debug=true  # 返回 mock rawPayload
+```
+
+debug 模式当前只含虚构 mock 数据。未来真实 adapter 必须先移除 token、个人信息和供应商禁止透传字段；生产环境还应使用后端配置彻底关闭 debug，而不是仅依赖前端隐藏入口。任何真实 API key 只能保存在后端环境变量中。
+
+## Phase 5 Search Orchestrator
+
+`backend/app/search_orchestrator.py` 将一次搜索扩展为固定、非递归的查询计划：
+
+```text
+A → B baseline
+A → hub 与 hub → B，最多 12 个 hubs
+```
+
+默认 hub 顺序为 BKK、DMK、SIN、KUL、HKG、TPE、MNL、SGN、HAN、ICN、NRT、KIX、CAN、SZX；每次搜索只取去重后的前 12 个。请求也可通过 `candidateHubs` 显式传入不超过 12 个 IATA code。origin、destination 或 hub 查询不会再次生成子查询，因此不存在递归扩张。
+
+执行顺序：验证 Pydantic `SearchRequest` → 生成 QueryPlan → 并发执行 baseline 与所有 hub legs → 每条 route 并发调用 suppliers → 强制 normalize → 合并去重 → split matcher → Risk Engine → value/cheapest ranking。
+
+资源边界：
+
+- 每个 supplier/leg 最多保留 30 个 normalized offers。
+- supplier 单次调用默认 timeout 10 秒。
+- 整个 route 查询计划默认 timeout 30 秒。
+- 单个 supplier 失败或 timeout 不取消其他 supplier；总 timeout 时保留已经完成的结果。
+
+搜索响应的标准 envelope：
+
+```json
+{
+  "searchId": "uuid",
+  "status": "complete | partial | empty",
+  "results": {
+    "protectedItineraries": [],
+    "splitTicketItineraries": [],
+    "baselinePrice": null,
+    "rankedResults": []
+  },
+  "errors": [],
+  "explanation": "..."
+}
+```
+
+`partial` 表示至少有结果但部分 supplier/route 失败；`empty` 会返回 HTTP 200、空数组和解释，不转成服务器错误。errors 包含 supplier、route、code 和已截断的开发可读 message；`token`、`api_key`、`authorization`、`secret` 与 Bearer 样式值会被替换为 `[REDACTED]`。
+
 ## Known limitations
 
 - 所有航班、价格和供应商均为虚构 mock；不连接真实 API、不爬站、不验证库存。
@@ -169,6 +242,8 @@ convenience 中 protected 为 1，同机场 self-transfer 为 0.75，超过 12 �
 - 风险评分是解释性启发规则，不保证签证、入境、过境、行李直挂、航站楼交通或衔接可行。
 - 不提供登录、支付、预订、价格提醒、数据库或缓存。
 - Mock 数据暂时没有跨机场组合；算法可识别有限同城机场组，但不计算 ground transfer 时间或费用。
+- Duffel 与 Skyscanner 仅为未配置 skeleton；Trip.com affiliate 仅生成无效占位链接。
+- 并发目前使用进程内 asyncio/thread worker，不包含分布式队列、跨请求缓存或 supplier rate limiter。
 - 真实购买流程必须在跳转/付款前重新验证价格，本 demo 没有购买入口。
 
 ## 下一阶段建议

@@ -18,6 +18,7 @@ export const searchSchema = z.object({
   sort: z.nativeEnum(SortOption).default(SortOption.Value),
   checkedBaggageLikelyRequired: booleanParam.default(false),
   visaTransitRequirementUnknown: booleanParam.default(true),
+  currency: z.string().regex(/^[A-Z]{3}$/).default("AUD"),
 }).refine((data) => data.maxGapHours >= data.minGapHours, {
   message: "Maximum gap must be at least the minimum gap",
   path: ["maxGapHours"],

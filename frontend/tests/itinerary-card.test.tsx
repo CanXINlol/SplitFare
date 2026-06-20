@@ -28,6 +28,6 @@ describe("ItineraryCard", () => {
     expect(screen.getByText(/medium risk/i)).toBeInTheDocument();
     expect(screen.getByText("4h at BKK")).toBeInTheDocument();
     expect(screen.getByText("18h 20m")).toBeInTheDocument();
-    expect(screen.getByText(/next ticket may not be protected/i)).toBeInTheDocument();
+    expect(screen.getByText(/second ticket may not be protected/i)).toBeInTheDocument();
   });
 });

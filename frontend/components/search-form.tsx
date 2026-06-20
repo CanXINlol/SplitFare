@@ -17,6 +17,7 @@ export function SearchForm() {
       minGapHours: 3, maxGapHours: 12, passengers: 1, cabin: Cabin.Economy,
       maxResults: 20, sort: SortOption.Value,
       checkedBaggageLikelyRequired: false, visaTransitRequirementUnknown: true,
+      currency: "AUD",
     },
   });
   const submit = (input: SearchInput) => router.push(`/results?${new URLSearchParams(Object.entries(input).map(([key, value]) => [key, String(value)]))}`);

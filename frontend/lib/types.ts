@@ -2,6 +2,9 @@ export enum Supplier {
   MockSky = "MockSky",
   DemoAir = "DemoAir",
   BudgetDemo = "BudgetDemo",
+  Duffel = "Duffel",
+  Skyscanner = "Skyscanner",
+  TripComAffiliate = "TripComAffiliate",
 }
 
 export enum ItineraryType {
@@ -28,6 +31,12 @@ export enum SortOption {
   Cheapest = "cheapest",
 }
 
+export enum SearchStatus {
+  Complete = "complete",
+  Partial = "partial",
+  Empty = "empty",
+}
+
 export interface SearchRequest {
   origin: string;
   destination: string;
@@ -40,6 +49,8 @@ export interface SearchRequest {
   sort: SortOption;
   checkedBaggageLikelyRequired: boolean;
   visaTransitRequirementUnknown: boolean;
+  currency: string;
+  candidateHubs?: string[];
 }
 
 export interface Segment {
@@ -68,7 +79,7 @@ export interface NormalizedFlightOffer {
   cabin: Cabin;
   baggageIncluded: boolean | null;
   bookingUrl: string | null;
-  rawPayload: Record<string, unknown>;
+  rawPayload?: Record<string, unknown>;
   lastCheckedAt: string;
   expiresAt: string;
   segments: Segment[];
@@ -105,6 +116,11 @@ export interface Itinerary {
 }
 
 export interface SearchResponse {
+  searchId: string;
+  status: SearchStatus;
+  results: SearchResults;
+  errors: SearchError[];
+  explanation: string;
   baseline: Itinerary | null;
   cheapestSplit: Itinerary | null;
   safestSplit: Itinerary | null;
@@ -113,5 +129,27 @@ export interface SearchResponse {
   splitTicketItineraries: Itinerary[];
   baselinePrice: number | null;
   rankedResults: Itinerary[];
+  supplierFailures: SupplierFailure[];
   disclaimer: string;
+}
+
+export interface SearchResults {
+  protectedItineraries: Itinerary[];
+  splitTicketItineraries: Itinerary[];
+  baselinePrice: number | null;
+  rankedResults: Itinerary[];
+}
+
+export interface SearchError {
+  supplier: Supplier | null;
+  origin: string | null;
+  destination: string | null;
+  code: string;
+  message: string;
+}
+
+export interface SupplierFailure {
+  supplier: Supplier;
+  errorType: string;
+  message: string;
 }

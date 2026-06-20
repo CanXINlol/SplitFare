@@ -1,0 +1,117 @@
+from datetime import datetime, timedelta, timezone
+
+import pytest
+from pydantic import ValidationError
+
+from app.adapters.mock_supplier import MockFlightSupplier
+from app.models import (
+    Cabin,
+    NormalizedFlightOffer,
+    RiskAssessment,
+    RiskLevel,
+    SearchRequest,
+    Segment,
+    Supplier,
+)
+
+
+NOW = datetime(2026, 8, 12, 0, tzinfo=timezone.utc)
+
+
+def valid_offer_data() -> dict[str, object]:
+    departure = NOW + timedelta(hours=7)
+    arrival = departure + timedelta(hours=9)
+    segment = Segment(
+        id="segment-1",
+        origin="MEL",
+        destination="BKK",
+        departure_at=departure,
+        arrival_at=arrival,
+        airline="TG",
+        operating_airline="TG",
+        flight_number="TG466",
+    )
+    return {
+        "id": "offer-1",
+        "supplier": Supplier.mock_sky,
+        "origin": "MEL",
+        "destination": "BKK",
+        "departure_at": departure,
+        "arrival_at": arrival,
+        "airline": "TG",
+        "operating_airline": "TG",
+        "flight_number": "TG466",
+        "price_amount": 390,
+        "currency": "AUD",
+        "cabin": Cabin.economy,
+        "baggage_included": True,
+        "booking_url": None,
+        "raw_payload": {"fixture": "segment-1"},
+        "last_checked_at": NOW,
+        "expires_at": NOW + timedelta(hours=2),
+        "segments": [segment],
+    }
+
+
+@pytest.mark.parametrize(
+    "required_field",
+    ["price_amount", "currency", "departure_at", "arrival_at", "last_checked_at", "expires_at"],
+)
+def test_offer_rejects_missing_price_currency_or_time(required_field: str) -> None:
+    data = valid_offer_data()
+    data.pop(required_field)
+    with pytest.raises(ValidationError):
+        NormalizedFlightOffer.model_validate(data)
+
+
+def test_offer_rejects_non_positive_price_and_invalid_currency() -> None:
+    for patch in ({"price_amount": 0}, {"currency": "AU"}):
+        with pytest.raises(ValidationError):
+            NormalizedFlightOffer.model_validate(valid_offer_data() | patch)
+
+
+def test_offer_rejects_naive_or_inverted_times() -> None:
+    data = valid_offer_data()
+    naive_departure = data["departure_at"].replace(tzinfo=None)  # type: ignore[union-attr]
+    with pytest.raises(ValidationError):
+        NormalizedFlightOffer.model_validate(data | {"departure_at": naive_departure})
+    with pytest.raises(ValidationError):
+        Segment.model_validate({
+            "id": "bad", "origin": "MEL", "destination": "BKK",
+            "departure_at": NOW + timedelta(hours=2), "arrival_at": NOW + timedelta(hours=1),
+            "airline": "TG", "operating_airline": "TG", "flight_number": "TG466",
+        })
+
+
+def test_offer_rejects_segment_endpoint_mismatch() -> None:
+    with pytest.raises(ValidationError, match="endpoints"):
+        NormalizedFlightOffer.model_validate(valid_offer_data() | {"destination": "PVG"})
+
+
+def test_risk_assessment_rejects_level_score_mismatch() -> None:
+    with pytest.raises(ValidationError, match="does not match"):
+        RiskAssessment(score=85, level=RiskLevel.medium, warnings=[])
+
+
+def test_search_request_normalizes_iata_and_validates_gap() -> None:
+    request = SearchRequest(
+        origin=" mel ", destination="pvg", departureDate="2026-08-12",
+        minGapHours=3, maxGapHours=12, passengers=1, cabin="economy",
+    )
+    assert (request.origin, request.destination) == ("MEL", "PVG")
+    with pytest.raises(ValidationError, match="max_gap_hours"):
+        SearchRequest(
+            origin="MEL", destination="PVG", departureDate="2026-08-12",
+            minGapHours=10, maxGapHours=3, passengers=1, cabin="economy",
+        )
+
+
+def test_all_mock_data_is_normalized() -> None:
+    request = SearchRequest(
+        origin="MEL", destination="PVG", departureDate="2026-08-12",
+        minGapHours=3, maxGapHours=12, passengers=1, cabin="economy",
+    )
+    offers = MockFlightSupplier().search(request)
+    assert offers
+    assert all(isinstance(offer, NormalizedFlightOffer) for offer in offers)
+    assert all(offer.raw_payload.get("fixture") for offer in offers)

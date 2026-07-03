@@ -20,4 +20,7 @@ test("mobile user can search and understand result trade-offs", async ({ page })
   await expect(page.getByText("Booking options").first()).toBeVisible();
   await expect(page.getByText("Check on Trip.com").first()).toBeVisible();
   await expect(page.getByText(/Price may change at checkout/).first()).toBeVisible();
+  await page.getByText("Check on Trip.com").first().click();
+  await expect(page.getByRole("dialog", { name: /pre-booking verification/i })).toBeVisible();
+  await expect(page.getByText(/Review before leaving SplitFare|not available/i)).toBeVisible();
 });

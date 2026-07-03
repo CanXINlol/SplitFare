@@ -61,10 +61,10 @@ export function ResultsView() {
         <p className="mt-4 max-w-3xl text-sm leading-6 text-white/70">Separate-ticket options are clearly marked. Lower prices may mean self-transfer, baggage re-check, longer layovers, or less protection if a flight is delayed.</p>
       </section>
       <section className="grid gap-5">
-        {groups.map((group) => <div key={group.title} className="scroll-mt-4"><div className="mb-3"><p className="text-xs font-black uppercase tracking-widest text-coral">{group.title}</p><p className="mt-1 text-sm text-ink/55">{group.subtitle}</p></div><ItineraryCard itinerary={group.itinerary} label={group.title} /></div>)}
+        {groups.map((group) => <div key={group.title} className="scroll-mt-4"><div className="mb-3"><p className="text-xs font-black uppercase tracking-widest text-coral">{group.title}</p><p className="mt-1 text-sm text-ink/55">{group.subtitle}</p></div><ItineraryCard itinerary={group.itinerary} label={group.title} searchId={data.searchId} /></div>)}
       </section>
       <div className="mb-5 mt-14 flex items-end justify-between gap-4"><div><p className="text-xs font-black uppercase tracking-widest text-coral">Full ranking</p><h2 className="mt-2 text-3xl font-black">All itineraries</h2><p className="mt-2 text-sm text-ink/55">Sorted by selected value logic. High-risk options are not dressed up as recommendations.</p></div><span className="shrink-0 text-sm text-ink/50">{data.ranked.length} results</span></div>
-      <div className="space-y-5">{data.ranked.map((itinerary, index) => <ItineraryCard key={itinerary.id} itinerary={itinerary} label={`Rank ${index + 1}`} />)}</div>
+      <div className="space-y-5">{data.ranked.map((itinerary, index) => <ItineraryCard key={itinerary.id} itinerary={itinerary} label={`Rank ${index + 1}`} searchId={data.searchId} />)}</div>
       <p className="mt-8 rounded-2xl bg-ink p-5 text-sm leading-6 text-white/75">{data.disclaimer} Prices must be re-verified before any future booking flow. No result is presented as guaranteed cheapest.</p>
     </>
   );

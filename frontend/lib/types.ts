@@ -179,6 +179,34 @@ export interface PriceVerification {
   message: string;
 }
 
+export interface PreBookingVerificationRequest {
+  searchId?: string | null;
+  itineraryId: string;
+  offerId?: string | null;
+  supplier: Supplier;
+  bookingOptionType: BookingOptionType;
+  bookingOptionLabel: string;
+  previousPrice?: number | null;
+  currency?: string | null;
+  bookingUrl?: string | null;
+  trackingId?: string | null;
+}
+
+export interface PreBookingVerificationResponse {
+  stillAvailable: boolean;
+  currentPrice: number | null;
+  previousPrice: number | null;
+  currency: string | null;
+  priceChanged: boolean;
+  bookingUrl: string | null;
+  checkedAt: string;
+  expiresAt: string | null;
+  status: VerificationStatus;
+  message: string;
+  canContinue: boolean;
+  requiresPriceCheck: boolean;
+}
+
 export interface SearchResponse {
   searchId: string;
   status: SearchStatus;

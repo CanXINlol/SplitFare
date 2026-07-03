@@ -181,6 +181,18 @@ class SearchRepository:
             select(ItinerarySegmentRecord).where(ItinerarySegmentRecord.itinerary_id == itinerary_id)
         ).all())
 
+    def record_search_event(
+        self, search_id: str, event_type: str, payload: dict[str, Any]
+    ) -> SearchEventRecord:
+        event = SearchEventRecord(
+            search_id=search_id,
+            event_type=event_type,
+            payload=payload,
+        )
+        self.session.add(event)
+        self.session.commit()
+        return event
+
     def _price_snapshot_record(
         self, request: SearchRequest, search_id: str, offer: NormalizedFlightOffer
     ) -> PriceSnapshotRecord:
@@ -279,5 +291,12 @@ class SearchPersistenceService:
         session = self.session_factory()
         try:
             SearchRepository(session).save_search_result(request, response)
+        finally:
+            session.close()
+
+    def record_event(self, search_id: str, event_type: str, payload: dict[str, Any]) -> None:
+        session = self.session_factory()
+        try:
+            SearchRepository(session).record_search_event(search_id, event_type, payload)
         finally:
             session.close()

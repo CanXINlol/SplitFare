@@ -1,6 +1,9 @@
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 
 from app.config import Settings
+from app.db import SessionLocal
+from app.db_models import SearchEventRecord
 from app.main import app, build_supplier_adapters
 
 
@@ -96,3 +99,77 @@ def test_live_duffel_adapter_is_only_enabled_when_token_exists() -> None:
     live_mode = build_supplier_adapters(Settings(duffel_api_token="duffel_test_token"))
     assert "Duffel" not in {adapter.name.value for adapter in mock_mode}
     assert "Duffel" in {adapter.name.value for adapter in live_mode}
+
+
+def test_pre_booking_verification_shows_price_change_and_records_events() -> None:
+    search_body = {
+        "origin": "MEL", "destination": "PVG", "departureDate": "2026-08-12",
+        "minGapHours": 3, "maxGapHours": 12, "passengers": 1, "cabin": "economy",
+    }
+    search_response = client.post("/api/search", json=search_body).json()
+    search_id = search_response["searchId"]
+    response = client.post("/api/booking-options/verify", json={
+        "searchId": search_id,
+        "itineraryId": "manual-test",
+        "offerId": "offer-direct-mu",
+        "supplier": "MockSky",
+        "bookingOptionType": "supplier",
+        "bookingOptionLabel": "Check on supplier",
+        "previousPrice": 1000,
+        "currency": "AUD",
+        "bookingUrl": "https://example.invalid/book",
+    })
+    assert response.status_code == 200
+    body = response.json()
+    assert body["stillAvailable"] is True
+    assert body["currentPrice"] == 1120
+    assert body["previousPrice"] == 1000
+    assert body["priceChanged"] is True
+    assert body["bookingUrl"] == "https://example.invalid/book"
+    session = SessionLocal()
+    try:
+        events = session.scalars(
+            select(SearchEventRecord).where(SearchEventRecord.search_id == search_id)
+        ).all()
+        assert "booking.clicked" in {event.event_type for event in events}
+        assert "booking.verification_completed" in {event.event_type for event in events}
+    finally:
+        session.close()
+
+
+def test_pre_booking_unavailable_disables_continue() -> None:
+    response = client.post("/api/booking-options/verify", json={
+        "itineraryId": "manual-test",
+        "offerId": "missing-offer",
+        "supplier": "MockSky",
+        "bookingOptionType": "supplier",
+        "bookingOptionLabel": "Check on supplier",
+        "previousPrice": 1000,
+        "currency": "AUD",
+        "bookingUrl": "https://example.invalid/book",
+    })
+    assert response.status_code == 200
+    body = response.json()
+    assert body["stillAvailable"] is False
+    assert body["canContinue"] is False
+    assert body["bookingUrl"] is None
+    assert body["currentPrice"] is None
+
+
+def test_trip_com_pre_booking_requires_provider_price_check() -> None:
+    response = client.post("/api/booking-options/verify", json={
+        "itineraryId": "manual-test",
+        "supplier": "TripComAffiliate",
+        "bookingOptionType": "trip_com",
+        "bookingOptionLabel": "Check on Trip.com",
+        "currency": "AUD",
+        "bookingUrl": "https://example.invalid/tripcom-affiliate?tracking_id=SPLITFARE_PLACEHOLDER",
+        "trackingId": "SPLITFARE_PLACEHOLDER",
+    })
+    assert response.status_code == 200
+    body = response.json()
+    assert body["stillAvailable"] is True
+    assert body["canContinue"] is True
+    assert body["requiresPriceCheck"] is True
+    assert body["currentPrice"] is None
+    assert body["priceChanged"] is False

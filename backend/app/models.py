@@ -183,6 +183,41 @@ class PriceVerification(ApiModel):
         return self
 
 
+class PreBookingVerificationRequest(ApiModel):
+    search_id: str | None = None
+    itinerary_id: str = Field(min_length=1)
+    offer_id: str | None = None
+    supplier: Supplier
+    booking_option_type: BookingOptionType
+    booking_option_label: str = Field(min_length=1)
+    previous_price: float | None = Field(default=None, gt=0, allow_inf_nan=False)
+    currency: str | None = Field(default=None, pattern=r"^[A-Z]{3}$")
+    booking_url: HttpUrl | None = None
+    tracking_id: str | None = None
+
+
+class PreBookingVerificationResponse(ApiModel):
+    still_available: bool
+    current_price: float | None = Field(default=None, gt=0, allow_inf_nan=False)
+    previous_price: float | None = Field(default=None, gt=0, allow_inf_nan=False)
+    currency: str | None = Field(default=None, pattern=r"^[A-Z]{3}$")
+    price_changed: bool
+    booking_url: HttpUrl | None = None
+    checked_at: datetime
+    expires_at: datetime | None = None
+    status: VerificationStatus
+    message: str
+    can_continue: bool = False
+    requires_price_check: bool = False
+
+    @field_validator("checked_at", "expires_at")
+    @classmethod
+    def require_timezone(cls, value: datetime | None) -> datetime | None:
+        if value is not None and (value.tzinfo is None or value.utcoffset() is None):
+            raise ValueError("pre-booking verification times must include a timezone")
+        return value
+
+
 class SupplierFailure(ApiModel):
     supplier: Supplier
     error_type: str

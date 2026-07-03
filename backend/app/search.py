@@ -2,6 +2,7 @@ import logging
 from datetime import datetime, timezone
 from uuid import uuid4
 
+from app.booking_options import attach_booking_options
 from app.matching import match_flight_offers
 from app.models import (
     MatchingRequest,
@@ -58,8 +59,24 @@ class SearchService:
             key=lambda item: (item.risk_score, item.total_price),
             default=None,
         )
+        all_with_options = attach_booking_options(
+            request,
+            result.protected_itineraries
+            + result.split_ticket_itineraries
+            + result.ranked_results
+            + ([baseline] if baseline else [])
+            + ([cheapest] if cheapest else [])
+            + ([safest] if safest else []),
+        )
+        by_id = {itinerary.id: itinerary for itinerary in all_with_options}
+        protected_itineraries = [by_id[itinerary.id] for itinerary in result.protected_itineraries]
+        split_ticket_itineraries = [by_id[itinerary.id] for itinerary in result.split_ticket_itineraries]
+        ranked_results = [by_id[itinerary.id] for itinerary in result.ranked_results]
+        baseline = by_id.get(baseline.id) if baseline else None
+        cheapest = by_id.get(cheapest.id) if cheapest else None
+        safest = by_id.get(safest.id) if safest else None
         status = (
-            SearchStatus.empty if not result.ranked_results
+            SearchStatus.empty if not ranked_results
             else SearchStatus.partial if supplier_result.errors
             else SearchStatus.complete
         )
@@ -71,10 +88,10 @@ class SearchService:
             else "Search completed successfully."
         )
         search_results = SearchResults(
-            protected_itineraries=result.protected_itineraries,
-            split_ticket_itineraries=result.split_ticket_itineraries,
+            protected_itineraries=protected_itineraries,
+            split_ticket_itineraries=split_ticket_itineraries,
             baseline_price=result.baseline_price,
-            ranked_results=result.ranked_results,
+            ranked_results=ranked_results,
         )
         response = SearchResponse(
             search_id=search_id,
@@ -85,11 +102,11 @@ class SearchService:
             baseline=baseline,
             cheapest_split=cheapest,
             safest_split=safest,
-            ranked=result.ranked_results,
-            protected_itineraries=result.protected_itineraries,
-            split_ticket_itineraries=result.split_ticket_itineraries,
+            ranked=ranked_results,
+            protected_itineraries=protected_itineraries,
+            split_ticket_itineraries=split_ticket_itineraries,
             baseline_price=result.baseline_price,
-            ranked_results=result.ranked_results,
+            ranked_results=ranked_results,
             supplier_failures=[
                 SupplierFailure(
                     supplier=error.supplier,

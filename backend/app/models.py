@@ -56,6 +56,19 @@ class VerificationStatus(str, Enum):
     not_configured = "not_configured"
 
 
+class BookingOptionType(str, Enum):
+    airline = "airline"
+    trip_com = "trip_com"
+    skyscanner = "skyscanner"
+    supplier = "supplier"
+
+
+class PriceConfidence(str, Enum):
+    confirmed = "confirmed"
+    check_required = "check_required"
+    unavailable = "unavailable"
+
+
 class SearchStatus(str, Enum):
     complete = "complete"
     partial = "partial"
@@ -76,6 +89,8 @@ class SearchRequest(ApiModel):
     visa_transit_requirement_unknown: bool = True
     currency: str = Field(default="AUD", pattern=r"^[A-Z]{3}$")
     candidate_hubs: list[str] | None = Field(default=None, max_length=12)
+    promo_code_note: str | None = Field(default=None, max_length=240)
+    member_price_note: str | None = Field(default=None, max_length=240)
 
     @field_validator("origin", "destination", "currency", mode="before")
     @classmethod
@@ -209,6 +224,44 @@ class PriceFreshness(ApiModel):
         return self
 
 
+class BookingOption(ApiModel):
+    type: BookingOptionType
+    label: str = Field(min_length=1)
+    supplier: Supplier | None = None
+    url: HttpUrl | None = None
+    price_amount: float | None = Field(default=None, gt=0, allow_inf_nan=False)
+    currency: str | None = Field(default=None, pattern=r"^[A-Z]{3}$")
+    price_confidence: PriceConfidence
+    tracking_id: str | None = None
+    last_checked_at: datetime | None = None
+    expires_at: datetime | None = None
+    notes: list[str] = Field(default_factory=list)
+
+    @field_validator("last_checked_at", "expires_at")
+    @classmethod
+    def require_timezone(cls, value: datetime | None) -> datetime | None:
+        if value is not None and (value.tzinfo is None or value.utcoffset() is None):
+            raise ValueError("booking option times must include a timezone")
+        return value
+
+    @model_validator(mode="after")
+    def validate_price_confidence(self) -> BookingOption:
+        if self.type == BookingOptionType.trip_com and self.price_confidence == PriceConfidence.confirmed:
+            raise ValueError("Trip.com affiliate/deep-link prices cannot be marked confirmed.")
+        if self.price_confidence == PriceConfidence.confirmed and (
+            self.price_amount is None or self.currency is None
+        ):
+            raise ValueError("confirmed booking options require price and currency")
+        return self
+
+
+class PriceSourceCoverage(ApiModel):
+    confirmed_supplier_count: int = Field(ge=0)
+    check_required_supplier_count: int = Field(ge=0)
+    unavailable_supplier_count: int = Field(ge=0)
+    labels: list[str] = Field(default_factory=list)
+
+
 class NormalizedFlightOffer(ApiModel):
     id: str = Field(min_length=1)
     supplier: Supplier
@@ -329,6 +382,8 @@ class Itinerary(ApiModel):
     last_checked_at: datetime
     expires_at: datetime
     price_freshness: PriceFreshness
+    booking_options: list[BookingOption] = Field(default_factory=list)
+    price_source_coverage: PriceSourceCoverage | None = None
     layover_departure_airport: str | None = Field(default=None, pattern=r"^[A-Z]{3}$")
     requires_ground_transfer: bool = False
 

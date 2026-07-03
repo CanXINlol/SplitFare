@@ -44,6 +44,19 @@ export enum VerificationStatus {
   NotConfigured = "not_configured",
 }
 
+export enum BookingOptionType {
+  Airline = "airline",
+  TripCom = "trip_com",
+  Skyscanner = "skyscanner",
+  Supplier = "supplier",
+}
+
+export enum PriceConfidence {
+  Confirmed = "confirmed",
+  CheckRequired = "check_required",
+  Unavailable = "unavailable",
+}
+
 export interface SearchRequest {
   origin: string;
   destination: string;
@@ -58,6 +71,8 @@ export interface SearchRequest {
   visaTransitRequirementUnknown: boolean;
   currency: string;
   candidateHubs?: string[];
+  promoCodeNote?: string | null;
+  memberPriceNote?: string | null;
 }
 
 export interface Segment {
@@ -105,6 +120,27 @@ export interface PriceFreshness {
   isExpired: boolean;
 }
 
+export interface BookingOption {
+  type: BookingOptionType;
+  label: string;
+  supplier: Supplier | null;
+  url: string | null;
+  priceAmount: number | null;
+  currency: string | null;
+  priceConfidence: PriceConfidence;
+  trackingId: string | null;
+  lastCheckedAt: string | null;
+  expiresAt: string | null;
+  notes: string[];
+}
+
+export interface PriceSourceCoverage {
+  confirmedSupplierCount: number;
+  checkRequiredSupplierCount: number;
+  unavailableSupplierCount: number;
+  labels: string[];
+}
+
 export interface Itinerary {
   id: string;
   type: ItineraryType;
@@ -125,6 +161,8 @@ export interface Itinerary {
   lastCheckedAt: string;
   expiresAt: string;
   priceFreshness: PriceFreshness;
+  bookingOptions: BookingOption[];
+  priceSourceCoverage: PriceSourceCoverage | null;
   layoverDepartureAirport: string | null;
   requiresGroundTransfer: boolean;
 }

@@ -12,6 +12,9 @@ from app.models import (
 )
 
 
+TRIP_COM_TRACKING_ID = "SPLITFARE_PLACEHOLDER"
+
+
 class TripComAffiliateAdapter(SupplierAdapter):
     @property
     def name(self) -> Supplier:
@@ -25,7 +28,7 @@ class TripComAffiliateAdapter(SupplierAdapter):
             "origin": origin, "destination": destination,
             "date": departure_date.isoformat(), "passengers": passengers,
             "cabin": cabin.value, "currency": currency,
-            "tracking": "SPLITFARE_PLACEHOLDER",
+            "tracking_id": TRIP_COM_TRACKING_ID,
         })
         return f"https://example.invalid/tripcom-affiliate?{query}"
 

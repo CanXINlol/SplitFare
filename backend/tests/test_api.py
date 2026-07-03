@@ -31,6 +31,14 @@ def test_search_api_uses_camel_case_contract() -> None:
     assert body["cheapestSplit"]["priceFreshness"]["lastCheckedAt"] == body["cheapestSplit"]["lastCheckedAt"]
     assert body["cheapestSplit"]["priceFreshness"]["expiresAt"] == body["cheapestSplit"]["expiresAt"]
     assert body["cheapestSplit"]["priceFreshness"]["isExpired"] is False
+    trip_option = next(
+        option for option in body["cheapestSplit"]["bookingOptions"]
+        if option["label"] == "Check on Trip.com"
+    )
+    assert trip_option["priceConfidence"] == "check_required"
+    assert trip_option["priceAmount"] is None
+    assert "tracking_id=SPLITFARE_PLACEHOLDER" in trip_option["url"]
+    assert body["cheapestSplit"]["priceSourceCoverage"]["checkRequiredSupplierCount"] >= 1
     assert body["baselinePrice"] == body["baseline"]["totalPrice"]
     assert body["protectedItineraries"]
     assert body["splitTicketItineraries"]

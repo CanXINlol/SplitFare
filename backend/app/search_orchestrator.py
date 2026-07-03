@@ -8,6 +8,7 @@ from app.adapters.orchestrator import (
     SupplierOrchestrator,
     sanitize_error_message,
 )
+from app.cache import CANDIDATE_HUBS_TTL_SECONDS, RedisCache, candidate_hubs_cache_key
 from app.models import FlightQuery, NormalizedFlightOffer, SearchError, SearchRequest
 
 
@@ -70,9 +71,49 @@ class SearchOrchestrator:
         self,
         supplier_orchestrator: SupplierOrchestrator,
         total_timeout_seconds: float = 30,
+        cache: RedisCache | None = None,
     ):
         self.supplier_orchestrator = supplier_orchestrator
         self.total_timeout_seconds = total_timeout_seconds
+        self.cache = cache
+
+    def _cached_candidate_hubs(self, request: SearchRequest) -> tuple[str, ...]:
+        if self.cache is None or request.candidate_hubs is not None:
+            return generate_candidate_hubs(request)
+        key = candidate_hubs_cache_key(request.origin, request.destination)
+        return self.cache.get_or_fetch(
+            key,
+            lambda: generate_candidate_hubs(request),
+            CANDIDATE_HUBS_TTL_SECONDS,
+            serialize=lambda hubs: list(hubs),
+            deserialize=lambda payload: tuple(str(item) for item in payload),
+        )
+
+    def _query_plan(self, request: SearchRequest) -> tuple[FlightQuery, ...]:
+        queries = [FlightQuery(
+            origin=request.origin,
+            destination=request.destination,
+            departure_date=request.departure_date,
+            kind="baseline",
+        )]
+        for hub in self._cached_candidate_hubs(request):
+            queries.extend((
+                FlightQuery(
+                    origin=request.origin,
+                    destination=hub,
+                    departure_date=request.departure_date,
+                    kind="outbound_to_hub",
+                    hub=hub,
+                ),
+                FlightQuery(
+                    origin=hub,
+                    destination=request.destination,
+                    departure_date=request.departure_date,
+                    kind="hub_to_destination",
+                    hub=hub,
+                ),
+            ))
+        return tuple(queries)
 
     async def _run_query(
         self, query: FlightQuery, request: SearchRequest
@@ -87,7 +128,7 @@ class SearchOrchestrator:
         )
 
     async def collect_offers(self, request: SearchRequest) -> OrchestratedOffers:
-        plan = generate_query_plan(request)
+        plan = self._query_plan(request)
         task_to_query = {
             asyncio.create_task(self._run_query(query, request)): query
             for query in plan

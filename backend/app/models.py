@@ -51,6 +51,7 @@ class SortOption(str, Enum):
 
 class VerificationStatus(str, Enum):
     verified = "verified"
+    expired = "expired"
     unavailable = "unavailable"
     not_configured = "not_configured"
 
@@ -141,7 +142,30 @@ class PriceVerification(ApiModel):
     price_amount: float | None = Field(default=None, gt=0)
     currency: str | None = Field(default=None, pattern=r"^[A-Z]{3}$")
     checked_at: datetime
+    expires_at: datetime | None = None
+    is_confirmed: bool = False
     message: str
+
+    @field_validator("checked_at", "expires_at")
+    @classmethod
+    def require_timezone(cls, value: datetime | None) -> datetime | None:
+        if value is not None and (value.tzinfo is None or value.utcoffset() is None):
+            raise ValueError("verification times must include a timezone")
+        return value
+
+    @model_validator(mode="after")
+    def validate_confirmation_status(self) -> PriceVerification:
+        if self.expires_at is not None and self.expires_at <= self.checked_at:
+            raise ValueError("expires_at must be later than checked_at")
+        is_confirmed = (
+            self.status == VerificationStatus.verified
+            and self.price_amount is not None
+            and self.currency is not None
+            and self.expires_at is not None
+            and self.expires_at > datetime.now(self.expires_at.tzinfo)
+        )
+        object.__setattr__(self, "is_confirmed", is_confirmed)
+        return self
 
 
 class SupplierFailure(ApiModel):
@@ -164,6 +188,25 @@ class SearchError(ApiModel):
     destination: str | None
     code: str
     message: str
+
+
+class PriceFreshness(ApiModel):
+    last_checked_at: datetime
+    expires_at: datetime
+    is_expired: bool
+
+    @field_validator("last_checked_at", "expires_at")
+    @classmethod
+    def require_timezone(cls, value: datetime) -> datetime:
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("price freshness times must include a timezone")
+        return value
+
+    @model_validator(mode="after")
+    def validate_times(self) -> PriceFreshness:
+        if self.expires_at <= self.last_checked_at:
+            raise ValueError("expires_at must be later than last_checked_at")
+        return self
 
 
 class NormalizedFlightOffer(ApiModel):
@@ -211,6 +254,42 @@ class NormalizedFlightOffer(ApiModel):
         return self
 
 
+class PriceSnapshot(ApiModel):
+    id: str = Field(min_length=1)
+    search_id: str = Field(min_length=1)
+    offer_id: str = Field(min_length=1)
+    supplier: Supplier
+    origin: str = Field(pattern=r"^[A-Z]{3}$")
+    destination: str = Field(pattern=r"^[A-Z]{3}$")
+    departure_date: date
+    passengers: int = Field(ge=1, le=9)
+    cabin: Cabin
+    price_amount: float = Field(gt=0, allow_inf_nan=False)
+    currency: str = Field(pattern=r"^[A-Z]{3}$")
+    last_checked_at: datetime
+    expires_at: datetime
+    verification_status: VerificationStatus
+    cache_key: str | None = None
+    created_at: datetime
+
+    @field_validator("last_checked_at", "expires_at", "created_at")
+    @classmethod
+    def require_timezone(cls, value: datetime) -> datetime:
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("snapshot times must include a timezone")
+        return value
+
+    @model_validator(mode="after")
+    def validate_snapshot(self) -> PriceSnapshot:
+        if self.origin == self.destination:
+            raise ValueError("snapshot origin and destination must differ")
+        if self.expires_at <= self.last_checked_at:
+            raise ValueError("expires_at must be later than last_checked_at")
+        if self.verification_status == VerificationStatus.verified and self.expires_at <= self.created_at:
+            raise ValueError("expired prices cannot be recorded as verified")
+        return self
+
+
 class SupplierSearchOutcome(ApiModel):
     offers: list[NormalizedFlightOffer]
     failures: list[SupplierFailure]
@@ -249,6 +328,7 @@ class Itinerary(ApiModel):
     suppliers: list[Supplier] = Field(min_length=1)
     last_checked_at: datetime
     expires_at: datetime
+    price_freshness: PriceFreshness
     layover_departure_airport: str | None = Field(default=None, pattern=r"^[A-Z]{3}$")
     requires_ground_transfer: bool = False
 
@@ -267,6 +347,11 @@ class Itinerary(ApiModel):
             raise ValueError("layover airport and gap must either both be set or both be null")
         if self.requires_ground_transfer and self.layover_departure_airport is None:
             raise ValueError("ground transfer requires a layover departure airport")
+        if (
+            self.price_freshness.last_checked_at,
+            self.price_freshness.expires_at,
+        ) != (self.last_checked_at, self.expires_at):
+            raise ValueError("price freshness must match itinerary price timestamps")
         return self
 
 

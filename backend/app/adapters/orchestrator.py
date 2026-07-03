@@ -4,11 +4,14 @@ from dataclasses import dataclass
 from datetime import date
 
 from app.adapters.base import SupplierAdapter
+from app.cache import RedisCache, flight_cache_key
 from app.models import (
     Cabin,
     NormalizedFlightOffer,
+    PriceVerification,
     SearchError,
     SearchRequest,
+    Supplier,
     SupplierFailure,
     SupplierSearchOutcome,
 )
@@ -38,10 +41,12 @@ class SupplierOrchestrator:
         adapters: list[SupplierAdapter],
         supplier_timeout_seconds: float = 10,
         max_offers_per_supplier_leg: int = 30,
+        cache: RedisCache | None = None,
     ):
         self.adapters = tuple(adapters)
         self.supplier_timeout_seconds = supplier_timeout_seconds
         self.max_offers_per_supplier_leg = max_offers_per_supplier_leg
+        self.cache = cache
 
     def search(self, request: SearchRequest) -> SupplierSearchOutcome:
         offers: list[NormalizedFlightOffer] = []
@@ -84,15 +89,46 @@ class SupplierOrchestrator:
         currency: str,
     ) -> RouteSearchResult:
         try:
-            normalized = await asyncio.wait_for(
-                asyncio.to_thread(
-                    adapter.search_one_way,
+            key = flight_cache_key(
+                adapter.name,
+                origin,
+                destination,
+                departure_date.isoformat(),
+                passengers,
+                cabin,
+                currency,
+            )
+            policy = adapter.cache_policy
+
+            def fetch() -> list[NormalizedFlightOffer]:
+                return adapter.search_one_way(
                     origin,
                     destination,
                     departure_date,
                     passengers,
                     cabin,
                     currency,
+                )
+
+            def serialize(offers: list[NormalizedFlightOffer]) -> list[dict[str, object]]:
+                return [offer.model_dump(mode="json") for offer in offers]
+
+            def deserialize(payload: object) -> list[NormalizedFlightOffer]:
+                if not isinstance(payload, list):
+                    raise TypeError("Cached supplier response must be a list.")
+                return [NormalizedFlightOffer.model_validate(item) for item in payload]
+
+            normalized = await asyncio.wait_for(
+                asyncio.to_thread(
+                    self.cache.get_or_fetch if self.cache and policy.can_store else fetch,
+                    key,
+                    fetch,
+                    policy.ttl_seconds,
+                    serialize=serialize,
+                    deserialize=deserialize,
+                    enabled=policy.can_store,
+                ) if self.cache and policy.can_store else asyncio.to_thread(
+                    fetch,
                 ),
                 timeout=self.supplier_timeout_seconds,
             )
@@ -140,3 +176,9 @@ class SupplierOrchestrator:
         offers = tuple(offer for result in results for offer in result.offers)
         errors = tuple(error for result in results for error in result.errors)
         return RouteSearchResult(offers=offers, errors=errors)
+
+    def verify_price(self, supplier: Supplier, offer_id: str) -> PriceVerification:
+        adapter = next((item for item in self.adapters if item.name == supplier), None)
+        if adapter is None:
+            raise ValueError(f"Unknown supplier: {supplier.value}")
+        return adapter.verify_price(offer_id)

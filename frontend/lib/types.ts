@@ -37,6 +37,13 @@ export enum SearchStatus {
   Empty = "empty",
 }
 
+export enum VerificationStatus {
+  Verified = "verified",
+  Expired = "expired",
+  Unavailable = "unavailable",
+  NotConfigured = "not_configured",
+}
+
 export interface SearchRequest {
   origin: string;
   destination: string;
@@ -92,6 +99,12 @@ export interface RiskAssessment {
   warnings: string[];
 }
 
+export interface PriceFreshness {
+  lastCheckedAt: string;
+  expiresAt: string;
+  isExpired: boolean;
+}
+
 export interface Itinerary {
   id: string;
   type: ItineraryType;
@@ -111,8 +124,21 @@ export interface Itinerary {
   suppliers: Supplier[];
   lastCheckedAt: string;
   expiresAt: string;
+  priceFreshness: PriceFreshness;
   layoverDepartureAirport: string | null;
   requiresGroundTransfer: boolean;
+}
+
+export interface PriceVerification {
+  offerId: string;
+  supplier: Supplier;
+  status: VerificationStatus;
+  priceAmount: number | null;
+  currency: string | null;
+  checkedAt: string;
+  expiresAt: string | null;
+  isConfirmed: boolean;
+  message: string;
 }
 
 export interface SearchResponse {

@@ -7,6 +7,11 @@ export function ItineraryCard({ itinerary, label }: { itinerary: Itinerary; labe
   const offerFor = (segment: Segment) => itinerary.offers.find(
     (offer) => offer.segments.some((offerSegment) => offerSegment.id === segment.id),
   );
+  const freshness = itinerary.priceFreshness ?? {
+    lastCheckedAt: itinerary.lastCheckedAt,
+    expiresAt: itinerary.expiresAt,
+    isExpired: new Date(itinerary.expiresAt).getTime() <= Date.now(),
+  };
   return (
     <article className="rounded-3xl border border-ink/10 bg-white p-5 shadow-card md:p-7">
       <div className="flex flex-wrap items-start justify-between gap-4">
@@ -20,6 +25,7 @@ export function ItineraryCard({ itinerary, label }: { itinerary: Itinerary; labe
       </div>
       <div className="space-y-3">{itinerary.segments.map((segment) => { const offer = offerFor(segment); return <div key={segment.id} className="flex flex-wrap justify-between gap-2 text-sm"><span className="font-bold">{clock(segment.departureAt)} {segment.origin} → {clock(segment.arrivalAt)} {segment.destination}</span><span className="text-ink/55">{segment.flightNumber} · {offer?.supplier ?? "Unknown supplier"} · baggage {offer?.baggageIncluded === true ? "included" : offer?.baggageIncluded === false ? "not included" : "unknown"}</span></div>; })}</div>
       {itinerary.warnings.length > 0 && <div className="mt-5 rounded-2xl border border-orange-200 bg-orange-50 p-4 text-sm"><p className="font-black">{itinerary.type === ItineraryType.SplitTicket ? "Self-transfer warning" : "Risk notes"}</p><ul className="mt-2 list-disc space-y-1 pl-5 leading-6">{itinerary.warnings.map((warning) => <li key={warning}>{warning}</li>)}</ul></div>}
+      <p className="mt-4 text-xs text-ink/45">Price freshness: {freshness.isExpired ? "expired" : "fresh"} 路 Checked {new Date(freshness.lastCheckedAt).toLocaleString("en-AU", { timeZone: "UTC" })} UTC 路 Expires {new Date(freshness.expiresAt).toLocaleString("en-AU", { timeZone: "UTC" })} UTC</p>
       <p className="mt-4 text-xs text-ink/45">Suppliers: {itinerary.suppliers.join(", ")} · Mock checked {new Date(itinerary.lastCheckedAt).toLocaleString("en-AU", { timeZone: "UTC" })} UTC · Expires {new Date(itinerary.expiresAt).toLocaleString("en-AU", { timeZone: "UTC" })} UTC</p>
     </article>
   );

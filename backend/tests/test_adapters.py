@@ -11,6 +11,7 @@ from app.adapters.mock_supplier import MockSupplierAdapter
 from app.adapters.orchestrator import SupplierOrchestrator
 from app.adapters.skyscanner import SkyscannerSupplierAdapter
 from app.adapters.trip_com import TripComAffiliateAdapter
+from app.config import Settings
 from app.models import (
     Cabin,
     NormalizedFlightOffer,
@@ -70,11 +71,10 @@ def test_optional_multi_city_defaults_to_unsupported() -> None:
 
 
 @pytest.mark.parametrize(
-    "adapter_type",
-    [DuffelSupplierAdapter, SkyscannerSupplierAdapter],
+    "adapter",
+    [DuffelSupplierAdapter(Settings(duffel_api_token=None)), SkyscannerSupplierAdapter()],
 )
-def test_external_supplier_skeletons_are_not_configured(adapter_type) -> None:
-    adapter = adapter_type()
+def test_external_supplier_skeletons_are_not_configured(adapter) -> None:
     with pytest.raises(AdapterNotConfiguredError):
         one_way(adapter)
     assert adapter.verify_price("future-offer").status == VerificationStatus.not_configured

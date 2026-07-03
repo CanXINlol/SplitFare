@@ -2,6 +2,7 @@ from abc import ABC, abstractmethod
 from datetime import date
 from typing import Any
 
+from app.cache import CachePolicy, default_supplier_cache_policy
 from app.models import (
     Cabin,
     FlightSlice,
@@ -30,6 +31,10 @@ class SupplierAdapter(ABC):
     @abstractmethod
     def name(self) -> Supplier:
         raise NotImplementedError
+
+    @property
+    def cache_policy(self) -> CachePolicy:
+        return default_supplier_cache_policy(self.name)
 
     def search_one_way(
         self,

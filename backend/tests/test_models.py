@@ -7,11 +7,13 @@ from app.adapters.mock_supplier import MockFlightSupplier
 from app.models import (
     Cabin,
     NormalizedFlightOffer,
+    PriceVerification,
     RiskAssessment,
     RiskLevel,
     SearchRequest,
     Segment,
     Supplier,
+    VerificationStatus,
 )
 
 
@@ -91,6 +93,28 @@ def test_offer_rejects_segment_endpoint_mismatch() -> None:
 def test_risk_assessment_rejects_level_score_mismatch() -> None:
     with pytest.raises(ValidationError, match="does not match"):
         RiskAssessment(score=85, level=RiskLevel.medium, warnings=[])
+
+
+def test_price_verification_never_confirms_expired_or_unavailable_price() -> None:
+    unavailable = PriceVerification(
+        offerId="offer-1",
+        supplier=Supplier.mock_sky,
+        status=VerificationStatus.unavailable,
+        checkedAt=NOW,
+        message="not found",
+    )
+    assert unavailable.is_confirmed is False
+    with pytest.raises(ValidationError, match="expires_at"):
+        PriceVerification(
+            offerId="offer-1",
+            supplier=Supplier.mock_sky,
+            status=VerificationStatus.verified,
+            priceAmount=100,
+            currency="AUD",
+            checkedAt=NOW,
+            expiresAt=NOW,
+            message="bad expiry",
+        )
 
 
 def test_search_request_normalizes_iata_and_validates_gap() -> None:

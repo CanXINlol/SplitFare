@@ -2,6 +2,7 @@ from datetime import date, datetime, time, timedelta, timezone
 from typing import Any
 
 from app.adapters.base import SupplierAdapter
+from app.cache import CacheCategory, CachePolicy, MOCK_FLIGHT_PRICE_TTL_SECONDS
 from app.data.mock_flights import MOCK_FLIGHTS
 from app.models import (
     Cabin,
@@ -23,6 +24,10 @@ class MockSupplierAdapter(SupplierAdapter):
     @property
     def name(self) -> Supplier:
         return self._name
+
+    @property
+    def cache_policy(self) -> CachePolicy:
+        return CachePolicy(CacheCategory.mock_flight_price, MOCK_FLIGHT_PRICE_TTL_SECONDS)
 
     def _fetch_one_way(
         self,
@@ -56,7 +61,7 @@ class MockSupplierAdapter(SupplierAdapter):
         cabin = Cabin(str(raw_response["cabin"]))
         currency = str(raw_response["currency"])
         checked_at = datetime.combine(departure_date, time(0), tzinfo=timezone.utc)
-        expires_at = checked_at + timedelta(hours=2)
+        expires_at = checked_at + timedelta(seconds=MOCK_FLIGHT_PRICE_TTL_SECONDS)
         offers: list[NormalizedFlightOffer] = []
         for flight in raw_response["flights"]:
             departure = datetime.combine(
@@ -111,13 +116,15 @@ class MockSupplierAdapter(SupplierAdapter):
             (item for item in MOCK_FLIGHTS if item.id == fixture_id and item.supplier == self.name),
             None,
         )
+        checked_at = datetime.now(timezone.utc)
         return PriceVerification(
             offer_id=offer_id,
             supplier=self.name,
             status=VerificationStatus.verified if flight else VerificationStatus.unavailable,
             price_amount=flight.price if flight else None,
             currency="AUD" if flight else None,
-            checked_at=datetime.now(timezone.utc),
+            checked_at=checked_at,
+            expires_at=checked_at + timedelta(seconds=MOCK_FLIGHT_PRICE_TTL_SECONDS) if flight else None,
             message="Verified against deterministic mock data." if flight else "Mock offer not found.",
         )
 

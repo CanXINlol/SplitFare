@@ -8,6 +8,7 @@ from app.models import (
     MatchingRequest,
     MatchingResult,
     NormalizedFlightOffer,
+    PriceFreshness,
     RiskLevel,
     SortOption,
 )
@@ -54,6 +55,8 @@ def _build_itinerary(
         checked_baggage_likely_required=checked_baggage_likely_required,
         visa_transit_requirement_unknown=visa_transit_requirement_unknown,
     )
+    last_checked_at = min(offer.last_checked_at for offer in offers)
+    expires_at = min(offer.expires_at for offer in offers)
     return Itinerary(
         id="__".join(offer.id for offer in offers),
         type=itinerary_type,
@@ -73,8 +76,13 @@ def _build_itinerary(
         offers=list(offers),
         risk_assessment=risk,
         suppliers=sorted({offer.supplier for offer in offers}, key=lambda supplier: supplier.value),
-        last_checked_at=min(offer.last_checked_at for offer in offers),
-        expires_at=min(offer.expires_at for offer in offers),
+        last_checked_at=last_checked_at,
+        expires_at=expires_at,
+        price_freshness=PriceFreshness(
+            last_checked_at=last_checked_at,
+            expires_at=expires_at,
+            is_expired=expires_at <= datetime.now(expires_at.tzinfo),
+        ),
     )
 
 

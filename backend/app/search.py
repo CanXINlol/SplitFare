@@ -1,3 +1,5 @@
+import logging
+from datetime import datetime, timezone
 from uuid import uuid4
 
 from app.matching import match_flight_offers
@@ -9,15 +11,34 @@ from app.models import (
     SearchStatus,
     SupplierFailure,
 )
+from app.price_snapshots import PriceSnapshotRecorder
+from app.repositories import SearchPersistenceService
 from app.search_orchestrator import SearchOrchestrator
 
 
+logger = logging.getLogger("splitfare.persistence")
+
+
 class SearchService:
-    def __init__(self, orchestrator: SearchOrchestrator):
+    def __init__(
+        self,
+        orchestrator: SearchOrchestrator,
+        price_snapshot_recorder: PriceSnapshotRecorder | None = None,
+        persistence_service: SearchPersistenceService | None = None,
+    ):
         self.orchestrator = orchestrator
+        self.price_snapshot_recorder = price_snapshot_recorder or PriceSnapshotRecorder()
+        self.persistence_service = persistence_service
 
     async def search(self, request: SearchRequest) -> SearchResponse:
+        search_id = str(uuid4())
         supplier_result = await self.orchestrator.collect_offers(request)
+        self.price_snapshot_recorder.record_offers(
+            search_id=search_id,
+            request=request,
+            offers=list(supplier_result.offers),
+            created_at=datetime.now(timezone.utc),
+        )
         result = match_flight_offers(MatchingRequest(
             origin=request.origin,
             destination=request.destination,
@@ -55,8 +76,8 @@ class SearchService:
             baseline_price=result.baseline_price,
             ranked_results=result.ranked_results,
         )
-        return SearchResponse(
-            search_id=str(uuid4()),
+        response = SearchResponse(
+            search_id=search_id,
             status=status,
             results=search_results,
             errors=list(supplier_result.errors),
@@ -80,3 +101,9 @@ class SearchService:
             ],
             disclaimer="Fictional mock fares only. Not live availability and not a guarantee of transit, baggage, visa or entry feasibility.",
         )
+        if self.persistence_service is not None:
+            try:
+                self.persistence_service.persist_search(request, response)
+            except Exception as exception:
+                logger.exception("persistence.search_failed search_id=%s reason=%s", search_id, type(exception).__name__)
+        return response

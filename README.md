@@ -258,3 +258,124 @@ Phase 9 Trip.com / 携程 strategy layer: Trip.com is included only as an affili
 Phase 10 results-page optimization: the results page is grouped into Best overall, Cheapest, Safest split-ticket, Protected ticket, and Long layover but cheaper. Cards now surface total price, savings, route, duration, layover airport/gap, risk level, high-risk/self-transfer warnings, supplier badges, baggage-unknown badges, and a booking CTA without requiring expansion. Copy avoids guaranteed-cheapest language and keeps separate-ticket/self-transfer status visible. Mobile E2E runs at 375px via `npm run test:e2e`. Lighthouse mobile performance on the results page was measured at 93 (>80) using Playwright Chromium as `CHROME_PATH`; on Windows, Lighthouse may emit an EPERM cleanup warning after the report is generated.
 
 Phase 11 pre-booking verification: every booking-option click now calls `POST /api/booking-options/verify` before redirecting. The API returns `stillAvailable`, `currentPrice`, `previousPrice`, `priceChanged`, `bookingUrl`, `checkedAt`, `expiresAt`, `canContinue`, and `requiresPriceCheck`. The frontend shows a confirmation modal with before/after pricing when a fare changes, disables the continue CTA when availability cannot be verified, and reminds users that prices may still change after leaving SplitFare. Clicks and verification completions are stored as `search_events` (`booking.clicked` and `booking.verification_completed`). Trip.com affiliate/deep-link options remain compliant check-required links: SplitFare can verify that a handoff URL exists, but it does not confirm Trip.com price or availability without an authorised API/contract source. Phase 11 still does not take payment, issue tickets, or guarantee downstream checkout pricing.
+# SplitFare Release Candidate
+
+SplitFare is a local mock demo for comparing protected flight itineraries with split-ticket / self-transfer combinations. It uses deterministic seed data only. It does not connect to live flight APIs, take payment, issue tickets, scrape OTA pages, or guarantee travel feasibility.
+
+## RC feature scope
+
+- Location autocomplete for supported seed cities, airports, IATA codes, and Chinese aliases.
+- City-to-airport resolution, including Melbourne (`MEL`, `AVV`) and Shanghai (`PVG`, `SHA`).
+- Airport-to-single-airport resolution, e.g. selecting `PVG` searches only `PVG`.
+- Airport search matrix with caps: up to 3 origin airports, 3 destination airports, and 12 hubs.
+- Mock one-way flight search, split-ticket matching, gap filtering, risk scoring, result grouping, booking options, and pre-booking verification modal.
+- Empty/error/loading states for the current mock flow.
+
+## Setup
+
+Backend:
+
+```powershell
+cd backend
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+```
+
+Frontend:
+
+```powershell
+cd frontend
+npm install
+```
+
+## Run
+
+Backend:
+
+```powershell
+cd backend
+.\.venv\Scripts\python.exe -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
+```
+
+Frontend:
+
+```powershell
+cd frontend
+$env:NEXT_PUBLIC_API_URL="http://127.0.0.1:8000"
+npm run dev
+```
+
+Open <http://localhost:3000>. API docs are at <http://localhost:8000/docs>.
+
+Docker option:
+
+```powershell
+docker compose up --build
+```
+
+## Test and build
+
+```powershell
+cd backend
+.\.venv\Scripts\python.exe -m pytest -q
+
+cd ..\frontend
+npm run lint
+npm test -- --run
+$env:NEXT_TELEMETRY_DISABLED="1"
+npm run build
+npm run test:e2e
+```
+
+`npm run test:e2e` starts the frontend on `127.0.0.1:3010` and backend on `127.0.0.1:8010`.
+
+## API summary
+
+- `GET /api/places/search?q=` returns ranked seed place suggestions.
+- `POST /api/places/resolve` resolves a `placeId` to prioritized airports.
+- `POST /api/search` accepts `originPlaceId` and `destinationPlaceId`, generates an airport matrix, runs mock supplier search, then ranks protected and split-ticket itineraries.
+- `POST /api/booking-options/verify` verifies mock price/availability before redirect and returns `stillAvailable`, `currentPrice`, `previousPrice`, `priceChanged`, `bookingUrl`, and `canContinue`.
+
+Example search:
+
+```json
+{
+  "originPlaceId": "city:melbourne-au",
+  "destinationPlaceId": "city:shanghai-cn",
+  "departureDate": "2026-08-12",
+  "minGapHours": 3,
+  "maxGapHours": 12,
+  "passengers": 1,
+  "cabin": "economy",
+  "maxResults": 20,
+  "sort": "value",
+  "checkedBaggageLikelyRequired": false,
+  "visaTransitRequirementUnknown": true,
+  "currency": "AUD"
+}
+```
+
+Legacy `origin` / `destination` IATA fields are still accepted by the backend and converted to `airport:{IATA}` internally, but the frontend submits place IDs.
+
+## Current mock limitations
+
+- No live Duffel, Skyscanner, Trip.com, airline, or OTA API calls.
+- No scraping, CAPTCHA bypass, login bypass, payment, ticketing, refunds, or change handling.
+- No real visa, entry, baggage-through-check, delay-protection, or ground-transfer guarantee.
+- No real geocoding provider. Location search only supports the seed place database in `backend/app/places.py`.
+- Mock flight data is strongest for Melbourne to Shanghai examples. Other seed places may resolve correctly but return empty mock search results.
+- Price verification is deterministic mock verification. Example links are not real purchasable checkout links.
+- `riskScore` is an explanatory heuristic, not a safety or legal/travel guarantee.
+
+## Future real API path
+
+Future live integrations should stay behind backend adapters and never expose API keys to the browser. A real geocoding provider should normalize into `Place`, `CandidateAirport`, and `ResolvedPlace`, preserve matrix caps, handle timeouts without 500s, and keep seed fallback for tests. A real flight supplier should normalize into `NormalizedFlightOffer`, retain supplier/cache policy metadata, and verify price before handoff.
+
+## Release checklist
+
+See `RELEASE_CHECKLIST.md`.
+
+---
+
+## Legacy phase notes

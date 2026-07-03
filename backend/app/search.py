@@ -5,19 +5,92 @@ from uuid import uuid4
 from app.booking_options import attach_booking_options
 from app.matching import match_flight_offers
 from app.models import (
+    Itinerary,
     MatchingRequest,
+    MatchingResult,
+    RiskLevel,
+    Segment,
     SearchRequest,
     SearchResponse,
     SearchResults,
     SearchStatus,
+    SortOption,
     SupplierFailure,
 )
+from app.places import place_service
 from app.price_snapshots import PriceSnapshotRecorder
 from app.repositories import SearchPersistenceService
 from app.search_orchestrator import SearchOrchestrator
 
 
 logger = logging.getLogger("splitfare.persistence")
+
+
+def _dedupe_itineraries(itineraries: list[Itinerary]) -> list[Itinerary]:
+    unique: dict[tuple[str, ...], Itinerary] = {}
+    for itinerary in itineraries:
+        unique.setdefault(tuple(offer.id for offer in itinerary.offers), itinerary)
+    return list(unique.values())
+
+
+def _rank_itineraries(itineraries: list[Itinerary], sort: SortOption, max_results: int) -> list[Itinerary]:
+    if sort == SortOption.cheapest:
+        ranked = sorted(
+            itineraries,
+            key=lambda itinerary: (
+                itinerary.total_price,
+                itinerary.total_duration_minutes,
+                itinerary.risk_score,
+                itinerary.id,
+            ),
+        )
+    else:
+        ranked = sorted(
+            itineraries,
+            key=lambda itinerary: (
+                itinerary.risk_level == RiskLevel.extreme,
+                -itinerary.value_score,
+                itinerary.total_price,
+                itinerary.total_duration_minutes,
+                itinerary.id,
+            ),
+        )
+    return ranked[:max_results]
+
+
+def _combine_matching_results(results: list[MatchingResult], request: SearchRequest) -> MatchingResult:
+    protected = _dedupe_itineraries([
+        itinerary for result in results for itinerary in result.protected_itineraries
+    ])
+    split = _dedupe_itineraries([
+        itinerary for result in results for itinerary in result.split_ticket_itineraries
+    ])
+    all_itineraries = _dedupe_itineraries(protected + split)
+    ranked = _rank_itineraries(all_itineraries, request.sort, request.max_results)
+    baseline_price = min(
+        (price for result in results for price in [result.baseline_price] if price is not None),
+        default=None,
+    )
+    return MatchingResult(
+        protected_itineraries=protected,
+        split_ticket_itineraries=split,
+        baseline_price=baseline_price,
+        ranked_results=ranked,
+    )
+
+
+def _with_airport_display(itinerary: Itinerary) -> Itinerary:
+    segments = [
+        Segment(
+            **{
+                **segment.model_dump(),
+                "origin_display": place_service.airport_label(segment.origin),
+                "destination_display": place_service.airport_label(segment.destination),
+            }
+        )
+        for segment in itinerary.segments
+    ]
+    return itinerary.model_copy(update={"segments": segments})
 
 
 class SearchService:
@@ -40,18 +113,27 @@ class SearchService:
             offers=list(supplier_result.offers),
             created_at=datetime.now(timezone.utc),
         )
-        result = match_flight_offers(MatchingRequest(
-            origin=request.origin,
-            destination=request.destination,
-            departure_date=request.departure_date,
-            min_gap_minutes=round(request.min_gap_hours * 60),
-            max_gap_minutes=round(request.max_gap_hours * 60),
-            max_results=request.max_results,
-            offers=supplier_result.offers,
-            sort=request.sort,
-            checked_baggage_likely_required=request.checked_baggage_likely_required,
-            visa_transit_requirement_unknown=request.visa_transit_requirement_unknown,
-        ))
+        result = _combine_matching_results([
+            match_flight_offers(MatchingRequest(
+                origin=pair.origin,
+                destination=pair.destination,
+                departure_date=request.departure_date,
+                min_gap_minutes=round(request.min_gap_hours * 60),
+                max_gap_minutes=round(request.max_gap_hours * 60),
+                max_results=request.max_results,
+                offers=supplier_result.offers,
+                sort=request.sort,
+                checked_baggage_likely_required=request.checked_baggage_likely_required,
+                visa_transit_requirement_unknown=request.visa_transit_requirement_unknown,
+            ))
+            for pair in supplier_result.matrix.baseline_pairs
+        ], request)
+        result = MatchingResult(
+            protected_itineraries=[_with_airport_display(item) for item in result.protected_itineraries],
+            split_ticket_itineraries=[_with_airport_display(item) for item in result.split_ticket_itineraries],
+            baseline_price=result.baseline_price,
+            ranked_results=[_with_airport_display(item) for item in result.ranked_results],
+        )
         baseline = min(result.protected_itineraries, key=lambda item: item.total_price, default=None)
         cheapest = min(result.split_ticket_itineraries, key=lambda item: item.total_price, default=None)
         safest = min(

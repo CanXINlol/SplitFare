@@ -50,6 +50,15 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def _stored_route_code(place_id: str, response: SearchResponse, side: str) -> str:
+    if response.ranked_results:
+        segment = response.ranked_results[0].segments[0 if side == "origin" else -1]
+        return segment.origin if side == "origin" else segment.destination
+    if place_id.lower().startswith("airport:"):
+        return place_id.split(":", 1)[1].upper()
+    return "LOC"
+
+
 def _supplier_cache_policy(supplier: Supplier) -> dict[str, Any]:
     from app.cache import default_supplier_cache_policy
 
@@ -114,8 +123,8 @@ class SearchRepository:
 
         search = SearchRecord(
             id=response.search_id,
-            origin=request.origin,
-            destination=request.destination,
+            origin=_stored_route_code(request.origin_place_id, response, "origin"),
+            destination=_stored_route_code(request.destination_place_id, response, "destination"),
             departure_date=request.departure_date,
             min_gap_minutes=round(request.min_gap_hours * 60),
             max_gap_minutes=round(request.max_gap_hours * 60),

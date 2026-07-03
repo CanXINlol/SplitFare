@@ -14,14 +14,18 @@ from app.config import Settings, load_settings
 from app.db import SessionLocal, init_database
 from app.models import (
     BookingOptionType,
+    PlaceSearchResponse,
     PreBookingVerificationRequest,
     PreBookingVerificationResponse,
     PriceVerification,
+    ResolvePlaceRequest,
+    ResolvedPlace,
     SearchRequest,
     SearchResponse,
     VerificationStatus,
 )
 from app.models import Supplier
+from app.places import place_service
 from app.repositories import SearchPersistenceService
 from app.search import SearchService
 from app.search_orchestrator import SearchOrchestrator
@@ -78,6 +82,19 @@ def remove_raw_payload(value: Any) -> Any:
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.get("/api/places/search", response_model=PlaceSearchResponse)
+def search_places(q: str) -> PlaceSearchResponse:
+    return PlaceSearchResponse(results=place_service.search(q))
+
+
+@app.post("/api/places/resolve", response_model=ResolvedPlace)
+def resolve_place(request: ResolvePlaceRequest) -> ResolvedPlace:
+    try:
+        return place_service.resolve(request.place_id)
+    except ValueError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
 
 
 @app.post("/api/search", response_model=SearchResponse)

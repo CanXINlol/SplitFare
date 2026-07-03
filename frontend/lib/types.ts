@@ -37,6 +37,12 @@ export enum SearchStatus {
   Empty = "empty",
 }
 
+export enum PlaceType {
+  City = "city",
+  Airport = "airport",
+  MetroArea = "metro_area",
+}
+
 export enum VerificationStatus {
   Verified = "verified",
   Expired = "expired",
@@ -58,8 +64,8 @@ export enum PriceConfidence {
 }
 
 export interface SearchRequest {
-  origin: string;
-  destination: string;
+  originPlaceId: string;
+  destinationPlaceId: string;
   departureDate: string;
   minGapHours: number;
   maxGapHours: number;
@@ -75,10 +81,55 @@ export interface SearchRequest {
   memberPriceNote?: string | null;
 }
 
+export interface PlaceAlias {
+  value: string;
+  locale: string | null;
+}
+
+export interface CandidateAirport {
+  iataCode: string;
+  name: string;
+  displayName: string;
+  city: string;
+  country: string;
+  isPrimary: boolean;
+  international: boolean;
+  priority: number;
+  distanceToCityKm: number;
+  hasMockFlightData: boolean;
+}
+
+export interface Place {
+  id: string;
+  type: PlaceType;
+  name: string;
+  displayName: string;
+  country: string;
+  aliases: PlaceAlias[];
+  airportCodes: string[];
+  iataCode: string | null;
+  isMajorHub: boolean;
+  priority: number;
+}
+
+export interface PlaceSearchResponse {
+  results: Place[];
+}
+
+export interface ResolvedPlace {
+  placeId: string;
+  type: PlaceType;
+  displayName: string;
+  country: string;
+  airports: CandidateAirport[];
+}
+
 export interface Segment {
   id: string;
   origin: string;
   destination: string;
+  originDisplay?: string | null;
+  destinationDisplay?: string | null;
   departureAt: string;
   arrivalAt: string;
   airline: string;

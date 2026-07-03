@@ -10,9 +10,32 @@ from app.main import app, build_supplier_adapters
 client = TestClient(app)
 
 
+def test_place_search_api_supports_english_and_chinese_aliases() -> None:
+    english = client.get("/api/places/search", params={"q": "Melbourne"})
+    chinese = client.get("/api/places/search", params={"q": "上海"})
+    assert english.status_code == 200
+    assert chinese.status_code == 200
+    assert english.json()["results"][0]["id"] == "city:melbourne-au"
+    assert chinese.json()["results"][0]["id"] == "city:shanghai-cn"
+
+
+def test_place_resolve_api_wraps_airport_as_resolved_place() -> None:
+    response = client.post("/api/places/resolve", json={"placeId": "airport:PVG"})
+    assert response.status_code == 200
+    body = response.json()
+    assert body["type"] == "airport"
+    assert [airport["iataCode"] for airport in body["airports"]] == ["PVG"]
+
+
+def test_invalid_place_returns_user_friendly_404() -> None:
+    response = client.post("/api/places/resolve", json={"placeId": "place:missing"})
+    assert response.status_code == 404
+    assert "Choose a city or airport" in response.json()["detail"]
+
+
 def test_search_api_uses_camel_case_contract() -> None:
     response = client.post("/api/search", json={
-        "origin": "MEL", "destination": "PVG", "departureDate": "2026-08-12",
+        "originPlaceId": "city:melbourne-au", "destinationPlaceId": "city:shanghai-cn", "departureDate": "2026-08-12",
         "minGapHours": 3, "maxGapHours": 12, "passengers": 1, "cabin": "economy",
     })
     assert response.status_code == 200
@@ -52,7 +75,7 @@ def test_search_api_uses_camel_case_contract() -> None:
 
 def test_raw_payload_requires_explicit_debug_flag() -> None:
     payload = {
-        "origin": "MEL", "destination": "PVG", "departureDate": "2026-08-12",
+        "originPlaceId": "city:melbourne-au", "destinationPlaceId": "city:shanghai-cn", "departureDate": "2026-08-12",
         "minGapHours": 3, "maxGapHours": 12, "passengers": 1, "cabin": "economy",
     }
     regular = client.post("/api/search", json=payload).json()
@@ -63,7 +86,7 @@ def test_raw_payload_requires_explicit_debug_flag() -> None:
 
 def test_no_results_returns_200_with_empty_arrays_and_explanation() -> None:
     response = client.post("/api/search", json={
-        "origin": "AAA", "destination": "BBB", "departureDate": "2026-08-12",
+        "originPlaceId": "airport:SYD", "destinationPlaceId": "airport:LHR", "departureDate": "2026-08-12",
         "minGapHours": 3, "maxGapHours": 12, "passengers": 1, "cabin": "economy",
         "candidateHubs": [],
     })
@@ -103,7 +126,7 @@ def test_live_duffel_adapter_is_only_enabled_when_token_exists() -> None:
 
 def test_pre_booking_verification_shows_price_change_and_records_events() -> None:
     search_body = {
-        "origin": "MEL", "destination": "PVG", "departureDate": "2026-08-12",
+        "originPlaceId": "city:melbourne-au", "destinationPlaceId": "city:shanghai-cn", "departureDate": "2026-08-12",
         "minGapHours": 3, "maxGapHours": 12, "passengers": 1, "cabin": "economy",
     }
     search_response = client.post("/api/search", json=search_body).json()

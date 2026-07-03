@@ -122,17 +122,17 @@ def test_search_request_normalizes_iata_and_validates_gap() -> None:
         origin=" mel ", destination="pvg", departureDate="2026-08-12",
         minGapHours=3, maxGapHours=12, passengers=1, cabin="economy",
     )
-    assert (request.origin, request.destination) == ("MEL", "PVG")
+    assert (request.origin_place_id, request.destination_place_id) == ("airport:MEL", "airport:PVG")
     with pytest.raises(ValidationError, match="max_gap_hours"):
         SearchRequest(
-            origin="MEL", destination="PVG", departureDate="2026-08-12",
+            originPlaceId="airport:MEL", destinationPlaceId="airport:PVG", departureDate="2026-08-12",
             minGapHours=10, maxGapHours=3, passengers=1, cabin="economy",
         )
 
 
 def test_all_mock_data_is_normalized() -> None:
     request = SearchRequest(
-        origin="MEL", destination="PVG", departureDate="2026-08-12",
+        originPlaceId="airport:MEL", destinationPlaceId="airport:PVG", departureDate="2026-08-12",
         minGapHours=3, maxGapHours=12, passengers=1, cabin="economy",
     )
     offers = MockFlightSupplier().search(request)

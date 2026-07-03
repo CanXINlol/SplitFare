@@ -7,8 +7,8 @@ const booleanParam = z.preprocess(
 );
 
 export const searchSchema = z.object({
-  origin: z.string().trim().length(3).transform((value) => value.toUpperCase()),
-  destination: z.string().trim().length(3).transform((value) => value.toUpperCase()),
+  originPlaceId: z.string().trim().min(1, "Choose a From location"),
+  destinationPlaceId: z.string().trim().min(1, "Choose a To location"),
   departureDate: z.string().min(1, "Choose a departure date"),
   minGapHours: z.coerce.number().min(1).max(24),
   maxGapHours: z.coerce.number().min(1).max(36),
@@ -24,6 +24,9 @@ export const searchSchema = z.object({
 }).refine((data) => data.maxGapHours >= data.minGapHours, {
   message: "Maximum gap must be at least the minimum gap",
   path: ["maxGapHours"],
+}).refine((data) => data.originPlaceId !== data.destinationPlaceId, {
+  message: "From and To must be different",
+  path: ["destinationPlaceId"],
 });
 
 export type SearchInput = SearchRequest;

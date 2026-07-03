@@ -49,13 +49,17 @@ class SupplierOrchestrator:
         self.cache = cache
 
     def search(self, request: SearchRequest) -> SupplierSearchOutcome:
+        from app.places import place_service
+
+        origin = place_service.resolve(request.origin_place_id).airports[0].iata_code
+        destination = place_service.resolve(request.destination_place_id).airports[0].iata_code
         offers: list[NormalizedFlightOffer] = []
         failures: list[SupplierFailure] = []
         for adapter in self.adapters:
             try:
                 normalized = adapter.search_one_way(
-                    request.origin,
-                    request.destination,
+                    origin,
+                    destination,
                     request.departure_date,
                     request.passengers,
                     request.cabin,

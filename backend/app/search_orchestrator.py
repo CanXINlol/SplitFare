@@ -9,7 +9,8 @@ from app.adapters.orchestrator import (
     sanitize_error_message,
 )
 from app.cache import CANDIDATE_HUBS_TTL_SECONDS, RedisCache, candidate_hubs_cache_key
-from app.models import FlightQuery, NormalizedFlightOffer, SearchError, SearchRequest
+from app.models import AirportSearchMatrix, FlightQuery, NormalizedFlightOffer, SearchError, SearchRequest
+from app.places import place_service
 
 
 DEFAULT_CANDIDATE_HUBS = (
@@ -24,6 +25,7 @@ class OrchestratedOffers:
     offers: tuple[NormalizedFlightOffer, ...]
     errors: tuple[SearchError, ...]
     query_plan: tuple[FlightQuery, ...]
+    matrix: AirportSearchMatrix
 
 
 def generate_candidate_hubs(request: SearchRequest) -> tuple[str, ...]:
@@ -34,36 +36,14 @@ def generate_candidate_hubs(request: SearchRequest) -> tuple[str, ...]:
     )
     unique: list[str] = []
     for hub in source:
-        if hub not in {request.origin, request.destination} and hub not in unique:
+        if hub not in unique:
             unique.append(hub)
     return tuple(unique[:MAX_HUBS])
 
 
 def generate_query_plan(request: SearchRequest) -> tuple[FlightQuery, ...]:
-    queries = [FlightQuery(
-        origin=request.origin,
-        destination=request.destination,
-        departure_date=request.departure_date,
-        kind="baseline",
-    )]
-    for hub in generate_candidate_hubs(request):
-        queries.extend((
-            FlightQuery(
-                origin=request.origin,
-                destination=hub,
-                departure_date=request.departure_date,
-                kind="outbound_to_hub",
-                hub=hub,
-            ),
-            FlightQuery(
-                origin=hub,
-                destination=request.destination,
-                departure_date=request.departure_date,
-                kind="hub_to_destination",
-                hub=hub,
-            ),
-        ))
-    return tuple(queries)
+    matrix = place_service.build_matrix(request, generate_candidate_hubs(request))
+    return tuple(matrix.query_plan)
 
 
 class SearchOrchestrator:
@@ -80,7 +60,7 @@ class SearchOrchestrator:
     def _cached_candidate_hubs(self, request: SearchRequest) -> tuple[str, ...]:
         if self.cache is None or request.candidate_hubs is not None:
             return generate_candidate_hubs(request)
-        key = candidate_hubs_cache_key(request.origin, request.destination)
+        key = candidate_hubs_cache_key(request.origin_place_id, request.destination_place_id)
         return self.cache.get_or_fetch(
             key,
             lambda: generate_candidate_hubs(request),
@@ -89,31 +69,8 @@ class SearchOrchestrator:
             deserialize=lambda payload: tuple(str(item) for item in payload),
         )
 
-    def _query_plan(self, request: SearchRequest) -> tuple[FlightQuery, ...]:
-        queries = [FlightQuery(
-            origin=request.origin,
-            destination=request.destination,
-            departure_date=request.departure_date,
-            kind="baseline",
-        )]
-        for hub in self._cached_candidate_hubs(request):
-            queries.extend((
-                FlightQuery(
-                    origin=request.origin,
-                    destination=hub,
-                    departure_date=request.departure_date,
-                    kind="outbound_to_hub",
-                    hub=hub,
-                ),
-                FlightQuery(
-                    origin=hub,
-                    destination=request.destination,
-                    departure_date=request.departure_date,
-                    kind="hub_to_destination",
-                    hub=hub,
-                ),
-            ))
-        return tuple(queries)
+    def _matrix(self, request: SearchRequest) -> AirportSearchMatrix:
+        return place_service.build_matrix(request, self._cached_candidate_hubs(request))
 
     async def _run_query(
         self, query: FlightQuery, request: SearchRequest
@@ -128,7 +85,8 @@ class SearchOrchestrator:
         )
 
     async def collect_offers(self, request: SearchRequest) -> OrchestratedOffers:
-        plan = self._query_plan(request)
+        matrix = self._matrix(request)
+        plan = tuple(matrix.query_plan)
         task_to_query = {
             asyncio.create_task(self._run_query(query, request)): query
             for query in plan
@@ -181,4 +139,5 @@ class SearchOrchestrator:
             offers=tuple(unique_offers.values()),
             errors=tuple(unique_errors.values()),
             query_plan=plan,
+            matrix=matrix,
         )

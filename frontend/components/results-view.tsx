@@ -60,6 +60,21 @@ export function ResultsView() {
         <h1 className="mt-2 text-3xl font-black md:text-5xl">Pick the trade-off, not just the fare.</h1>
         <p className="mt-4 max-w-3xl text-sm leading-6 text-white/70">Separate-ticket options are clearly marked. Lower prices may mean self-transfer, baggage re-check, longer layovers, or less protection if a flight is delayed.</p>
       </section>
+      {data.ranked.length === 0 && (
+        <section className="rounded-3xl border border-ink/10 bg-white p-8 shadow-card">
+          <p className="text-xs font-black uppercase tracking-widest text-coral">No matching mock fares</p>
+          <h2 className="mt-2 text-3xl font-black">No itinerary matched this search.</h2>
+          <p className="mt-3 max-w-2xl text-sm leading-6 text-ink/60">
+            {data.explanation || "Try another supported seed city, airport, date, or connection-gap range."}
+          </p>
+          {data.errors.length > 0 && (
+            <ul className="mt-4 list-disc space-y-1 pl-5 text-sm text-ink/55">
+              {data.errors.slice(0, 3).map((item) => <li key={`${item.code}-${item.origin}-${item.destination}`}>{item.message}</li>)}
+            </ul>
+          )}
+          <Link href="/" className="mt-5 inline-block rounded-xl bg-ink px-4 py-2 text-sm font-black text-white">Back to search</Link>
+        </section>
+      )}
       <section className="grid gap-5">
         {groups.map((group) => <div key={group.title} className="scroll-mt-4"><div className="mb-3"><p className="text-xs font-black uppercase tracking-widest text-coral">{group.title}</p><p className="mt-1 text-sm text-ink/55">{group.subtitle}</p></div><ItineraryCard itinerary={group.itinerary} label={group.title} searchId={data.searchId} /></div>)}
       </section>

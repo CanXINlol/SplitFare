@@ -3,7 +3,7 @@ import Link from "next/link";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "SplitFare — Mock flight combinations",
+  title: "SplitFare - Mock flight combinations",
   description: "Compare protected and self-transfer itineraries using fictional mock data.",
 };
 

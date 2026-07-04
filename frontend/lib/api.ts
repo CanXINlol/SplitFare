@@ -13,6 +13,17 @@ const API_URL = (
   ?? "http://localhost:8000"
 ).replace(/\/$/, "");
 
+async function apiFetch(path: string, init?: RequestInit): Promise<Response> {
+  try {
+    return await fetch(`${API_URL}${path}`, init);
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") {
+      throw error;
+    }
+    throw new Error(`Could not reach SplitFare API at ${API_URL}. Check that the backend is running and CORS allows this frontend origin.`);
+  }
+}
+
 async function responseError(response: Response, fallback: string): Promise<Error> {
   const body = (await response.json().catch(() => null)) as {
     detail?: string;
@@ -22,7 +33,7 @@ async function responseError(response: Response, fallback: string): Promise<Erro
 }
 
 export async function searchFlights(input: SearchInput, signal?: AbortSignal): Promise<SearchResponse> {
-  const response = await fetch(`${API_URL}/api/search`, {
+  const response = await apiFetch("/api/search", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(input),
@@ -35,15 +46,15 @@ export async function searchFlights(input: SearchInput, signal?: AbortSignal): P
 }
 
 export async function searchPlaces(query: string, signal?: AbortSignal): Promise<PlaceSearchResponse> {
-  const response = await fetch(`${API_URL}/api/places/search?q=${encodeURIComponent(query)}`, { signal });
+  const response = await apiFetch(`/api/places/search?q=${encodeURIComponent(query)}`, { signal });
   if (!response.ok) {
-    throw new Error("Could not search places.");
+    throw await responseError(response, "Could not search places.");
   }
   return response.json() as Promise<PlaceSearchResponse>;
 }
 
 export async function resolvePlace(placeId: string, signal?: AbortSignal): Promise<ResolvedPlace> {
-  const response = await fetch(`${API_URL}/api/places/resolve`, {
+  const response = await apiFetch("/api/places/resolve", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ placeId }),
@@ -59,7 +70,7 @@ export async function verifyBookingOption(
   input: PreBookingVerificationRequest,
   signal?: AbortSignal,
 ): Promise<PreBookingVerificationResponse> {
-  const response = await fetch(`${API_URL}/api/booking-options/verify`, {
+  const response = await apiFetch("/api/booking-options/verify", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(input),

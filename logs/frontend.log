@@ -1,0 +1,29 @@
+
+> splitfare-frontend@0.1.0 dev
+> next dev --hostname 127.0.0.1 --port 8081
+
+   ▲ Next.js 15.5.19
+   - Local:        http://127.0.0.1:8081
+   - Network:      http://127.0.0.1:8081
+   - Experiments (use with caution):
+     · cpus: 1
+
+ ✓ Starting...
+ ✓ Ready in 1679ms
+ ○ Compiling / ...
+ ✓ Compiled / in 1446ms (681 modules)
+ GET / 200 in 1774ms
+ GET / 200 in 61ms
+ GET / 200 in 44ms
+ ✓ Compiled /results in 451ms (693 modules)
+ GET /results?originPlaceId=city%3Amelbourne-au&destinationPlaceId=city%3Ashanghai-cn&departureDate=2026-08-12&minGapHours=3&maxGapHours=12&passengers=1&cabin=economy&maxResults=20&sort=value&checkedBaggageLikelyRequired=false&visaTransitRequirementUnknown=true&currency=AUD&promoCodeNote=&memberPriceNote= 200 in 546ms
+ GET /results?originPlaceId=city%3Amelbourne-au&destinationPlaceId=city%3Ashanghai-cn&departureDate=2026-08-12&minGapHours=3&maxGapHours=12&passengers=1&cabin=economy&maxResults=20&sort=value&checkedBaggageLikelyRequired=false&visaTransitRequirementUnknown=true&currency=AUD&promoCodeNote=&memberPriceNote= 200 in 23ms
+ GET / 200 in 23ms
+ GET /results?originPlaceId=city%3Amelbourne-au&destinationPlaceId=city%3Ashanghai-cn&departureDate=2026-08-12&minGapHours=3&maxGapHours=12&passengers=1&cabin=economy&maxResults=20&sort=value&checkedBaggageLikelyRequired=false&visaTransitRequirementUnknown=true&currency=AUD&promoCodeNote=&memberPriceNote= 200 in 16ms
+ GET / 200 in 16ms
+ GET /results?originPlaceId=city%3Amelbourne-au&destinationPlaceId=city%3Ashanghai-cn&departureDate=2026-08-12&minGapHours=3&maxGapHours=12&passengers=1&cabin=economy&maxResults=20&sort=value&checkedBaggageLikelyRequired=false&visaTransitRequirementUnknown=true&currency=AUD&promoCodeNote=&memberPriceNote= 200 in 21ms
+ ✓ Compiled in 259ms (679 modules)
+ ✓ Compiled in 247ms (693 modules)
+ GET /results?originPlaceId=city%3Amelbourne-au&destinationPlaceId=city%3Ashanghai-cn&departureDate=2026-08-12&minGapHours=3&maxGapHours=12&passengers=1&cabin=economy&maxResults=20&sort=value&checkedBaggageLikelyRequired=false&visaTransitRequirementUnknown=true&currency=AUD&promoCodeNote=&memberPriceNote= 200 in 90ms
+ ✓ Compiled in 207ms (693 modules)
+ GET /results?originPlaceId=city%3Amelbourne-au&destinationPlaceId=city%3Ashanghai-cn&departureDate=2026-08-12&minGapHours=3&maxGapHours=12&passengers=1&cabin=economy&maxResults=20&sort=value&checkedBaggageLikelyRequired=false&visaTransitRequirementUnknown=true&currency=AUD&promoCodeNote=&memberPriceNote= 200 in 69ms

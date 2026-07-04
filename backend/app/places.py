@@ -125,6 +125,47 @@ CITY_SEEDS: tuple[CitySeed, ...] = (
 )
 
 
+CITY_ALIAS_OVERRIDES: dict[str, tuple[str, ...]] = {
+    "city:melbourne-au": ("\u58a8\u5c14\u672c",),
+    "city:sydney-au": ("\u6089\u5c3c",),
+    "city:brisbane-au": ("\u5e03\u91cc\u65af\u73ed",),
+    "city:perth-au": ("\u73c0\u65af",),
+    "city:adelaide-au": ("\u963f\u5fb7\u83b1\u5fb7",),
+    "city:shanghai-cn": ("\u4e0a\u6d77",),
+    "city:beijing-cn": ("\u5317\u4eac",),
+    "city:guangzhou-cn": ("\u5e7f\u5dde",),
+    "city:shenzhen-cn": ("\u6df1\u5733",),
+    "city:nanjing-cn": ("\u5357\u4eac",),
+    "city:hangzhou-cn": ("\u676d\u5dde",),
+    "city:chengdu-cn": ("\u6210\u90fd",),
+    "city:hong-kong-cn": ("\u9999\u6e2f",),
+    "city:bangkok-th": ("\u66fc\u8c37",),
+    "city:singapore-sg": ("\u65b0\u52a0\u5761",),
+    "city:kuala-lumpur-my": ("\u5409\u9686\u5761",),
+    "city:taipei-tw": ("\u53f0\u5317", "\u81fa\u5317"),
+    "city:seoul-kr": ("\u9996\u5c14", "\u9996\u723e"),
+    "city:tokyo-jp": ("\u4e1c\u4eac", "\u6771\u4eac"),
+    "city:osaka-jp": ("\u5927\u962a",),
+    "city:manila-ph": ("\u9a6c\u5c3c\u62c9", "\u99ac\u5c3c\u62c9"),
+    "city:ho-chi-minh-vn": ("\u80e1\u5fd7\u660e\u5e02",),
+    "city:hanoi-vn": ("\u6cb3\u5185", "\u6cb3\u5167"),
+    "city:london-gb": ("\u4f26\u6566",),
+    "city:new-york-us": ("\u7ebd\u7ea6", "\u7d10\u7d04"),
+    "city:los-angeles-us": ("\u6d1b\u6749\u77f6",),
+    "city:san-francisco-us": ("\u65e7\u91d1\u5c71",),
+    "city:paris-fr": ("\u5df4\u9ece",),
+    "city:frankfurt-de": ("\u6cd5\u5170\u514b\u798f", "\u6cd5\u862d\u514b\u798f"),
+}
+
+
+AIRPORT_ALIAS_OVERRIDES: dict[str, tuple[str, ...]] = {
+    code: aliases
+    for seed in CITY_SEEDS
+    for code in seed.airport_codes
+    if (aliases := CITY_ALIAS_OVERRIDES.get(seed.place_id))
+}
+
+
 def _key(value: str) -> str:
     return normalize("NFKC", value).casefold().strip()
 
@@ -156,13 +197,14 @@ class PlaceService:
     def _build_places(self) -> dict[str, Place]:
         places: dict[str, Place] = {}
         for seed in CITY_SEEDS:
+            aliases = tuple(dict.fromkeys((*seed.aliases, *CITY_ALIAS_OVERRIDES.get(seed.place_id, ()))))
             places[seed.place_id] = Place(
                 id=seed.place_id,
                 type=PlaceType.city,
                 name=seed.name,
                 display_name=f"{seed.name}, {seed.country}",
                 country=seed.country,
-                aliases=[PlaceAlias(value=alias) for alias in seed.aliases],
+                aliases=[PlaceAlias(value=alias) for alias in aliases],
                 airport_codes=list(seed.airport_codes),
                 is_major_hub=seed.is_major_hub,
                 priority=seed.priority,
@@ -179,6 +221,7 @@ class PlaceService:
                     PlaceAlias(value=airport.name),
                     PlaceAlias(value=airport.display_name),
                     PlaceAlias(value=airport.city),
+                    *(PlaceAlias(value=alias) for alias in AIRPORT_ALIAS_OVERRIDES.get(airport.iata_code, ())),
                 ],
                 airport_codes=[airport.iata_code],
                 iata_code=airport.iata_code,

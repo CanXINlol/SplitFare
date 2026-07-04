@@ -1,0 +1,35 @@
+INFO:     127.0.0.1:4758 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:4774 - "GET /api/places/search?q=Shanghai HTTP/1.1" 200 OK
+INFO:     127.0.0.1:4773 - "GET /api/places/search?q=Melbourne HTTP/1.1" 200 OK
+INFO:     127.0.0.1:4773 - "GET /api/places/search?q=Melbourne%5C HTTP/1.1" 200 OK
+INFO:     127.0.0.1:4773 - "GET /api/places/search?q=Melbourne HTTP/1.1" 200 OK
+INFO:     127.0.0.1:4773 - "GET /api/places/search?q=Melbourn HTTP/1.1" 200 OK
+INFO:     127.0.0.1:4773 - "GET /api/places/search?q=me HTTP/1.1" 200 OK
+INFO:     127.0.0.1:4773 - "GET /api/places/search?q=mel HTTP/1.1" 200 OK
+INFO:     127.0.0.1:4773 - "GET /api/places/search?q=melb HTTP/1.1" 200 OK
+INFO:     127.0.0.1:4773 - "GET /api/places/search?q=melbo HTTP/1.1" 200 OK
+INFO:     127.0.0.1:4773 - "GET /api/places/search?q=melboe HTTP/1.1" 200 OK
+INFO:     127.0.0.1:4773 - "GET /api/places/search?q=melboen HTTP/1.1" 200 OK
+INFO:     127.0.0.1:4773 - "GET /api/places/search?q=melborn HTTP/1.1" 200 OK
+INFO:     127.0.0.1:4773 - "GET /api/places/search?q=melborne HTTP/1.1" 200 OK
+INFO:     127.0.0.1:4778 - "GET /api/places/search?q=Melborne HTTP/1.1" 200 OK
+INFO:     127.0.0.1:4778 - "GET /api/places/search?q=Melbourne HTTP/1.1" 200 OK
+INFO:     127.0.0.1:4778 - "GET /api/places/search?q=Melbourne HTTP/1.1" 200 OK
+INFO:     127.0.0.1:4787 - "GET /api/places/search?q=Shanghai HTTP/1.1" 200 OK
+INFO:     127.0.0.1:4787 - "OPTIONS /api/search HTTP/1.1" 400 Bad Request
+INFO:     127.0.0.1:4778 - "OPTIONS /api/search HTTP/1.1" 400 Bad Request
+INFO:     127.0.0.1:4778 - "GET /api/places/search?q=Melbourne HTTP/1.1" 200 OK
+INFO:     127.0.0.1:4787 - "GET /api/places/search?q=Shanghai HTTP/1.1" 200 OK
+INFO:     127.0.0.1:4787 - "OPTIONS /api/search HTTP/1.1" 400 Bad Request
+INFO:     127.0.0.1:4787 - "GET /api/places/search?q=Melbourne HTTP/1.1" 200 OK
+INFO:     127.0.0.1:4778 - "GET /api/places/search?q=Shanghai HTTP/1.1" 200 OK
+INFO:     127.0.0.1:4788 - "OPTIONS /api/search HTTP/1.1" 400 Bad Request
+INFO:     127.0.0.1:4788 - "GET /api/places/search?q=Melbourne HTTP/1.1" 200 OK
+INFO:     127.0.0.1:4789 - "GET /api/places/search?q=Shanghai HTTP/1.1" 200 OK
+INFO:     127.0.0.1:4789 - "OPTIONS /api/search HTTP/1.1" 400 Bad Request
+INFO:     127.0.0.1:4789 - "GET /api/places/search?q=Melbourne HTTP/1.1" 200 OK
+INFO:     127.0.0.1:4788 - "GET /api/places/search?q=Shanghai HTTP/1.1" 200 OK
+INFO:     127.0.0.1:4788 - "OPTIONS /api/search HTTP/1.1" 400 Bad Request
+INFO:     127.0.0.1:4818 - "GET /api/places/search?q=mel HTTP/1.1" 200 OK
+INFO:     127.0.0.1:4819 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:4839 - "OPTIONS /api/search HTTP/1.1" 400 Bad Request

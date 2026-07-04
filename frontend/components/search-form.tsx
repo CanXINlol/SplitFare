@@ -27,17 +27,33 @@ function LocationField({
 }) {
   const [suggestions, setSuggestions] = useState<Place[]>([]);
   const [open, setOpen] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [lookupError, setLookupError] = useState<string | null>(null);
 
   useEffect(() => {
     const controller = new AbortController();
     if (value.trim().length < 2) {
       setSuggestions([]);
+      setLoading(false);
+      setLookupError(null);
       return () => controller.abort();
     }
+    setLoading(true);
+    setLookupError(null);
     const timer = window.setTimeout(() => {
       searchPlaces(value, controller.signal)
-        .then((response) => setSuggestions(response.results))
-        .catch(() => setSuggestions([]));
+        .then((response) => {
+          setSuggestions(response.results);
+          setLookupError(null);
+        })
+        .catch((error: unknown) => {
+          if (error instanceof Error && error.name === "AbortError") return;
+          setSuggestions([]);
+          setLookupError(error instanceof Error ? error.message : "Could not search places.");
+        })
+        .finally(() => {
+          if (!controller.signal.aborted) setLoading(false);
+        });
     }, 120);
     return () => {
       window.clearTimeout(timer);
@@ -60,8 +76,11 @@ function LocationField({
         onFocus={() => setOpen(true)}
       />
       <span className="mt-1 block text-xs font-normal text-ink/45">{selectedPlaceId ? "Selected location ready" : "Choose a suggestion before searching"}</span>
-      {open && suggestions.length > 0 && (
+      {open && value.trim().length >= 2 && (
         <div className="absolute z-20 mt-2 w-full overflow-hidden rounded-2xl border border-ink/10 bg-white shadow-card">
+          {loading && <p className="px-4 py-3 text-sm text-ink/50">Searching supported places...</p>}
+          {lookupError && <p className="px-4 py-3 text-sm text-red-700">{lookupError}</p>}
+          {!loading && !lookupError && suggestions.length === 0 && <p className="px-4 py-3 text-sm text-ink/50">No supported places found.</p>}
           {suggestions.map((place) => (
             <button
               type="button"

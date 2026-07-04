@@ -82,6 +82,8 @@ def load_settings() -> Settings:
         "http://127.0.0.1:3000",
         "http://localhost:3010",
         "http://127.0.0.1:3010",
+        "http://localhost:8081",
+        "http://127.0.0.1:8081",
     )
     return Settings(
         app_env=app_env,

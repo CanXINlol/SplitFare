@@ -45,6 +45,12 @@ def test_place_resolve_api_wraps_airport_as_resolved_place() -> None:
     assert [airport["iataCode"] for airport in body["airports"]] == ["PVG"]
 
 
+def test_place_search_api_supports_real_chinese_aliases() -> None:
+    response = client.get("/api/places/search", params={"q": "\u4e0a\u6d77"})
+    assert response.status_code == 200
+    assert response.json()["results"][0]["id"] == "city:shanghai-cn"
+
+
 def test_invalid_place_returns_user_friendly_404() -> None:
     response = client.post("/api/places/resolve", json={"placeId": "place:missing"})
     assert response.status_code == 404

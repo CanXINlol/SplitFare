@@ -74,6 +74,44 @@ def test_chinese_alias_matching(query: str, expected: str) -> None:
     assert place_service.search(query)[0].id == expected
 
 
+@pytest.mark.parametrize(
+    ("query", "expected"),
+    [
+        ("\u58a8\u5c14\u672c", "city:melbourne-au"),
+        ("\u4e0a\u6d77", "city:shanghai-cn"),
+        ("\u5317\u4eac", "city:beijing-cn"),
+        ("\u5e7f\u5dde", "city:guangzhou-cn"),
+        ("\u6df1\u5733", "city:shenzhen-cn"),
+        ("\u9999\u6e2f", "city:hong-kong-cn"),
+        ("\u53f0\u5317", "city:taipei-tw"),
+        ("\u4e1c\u4eac", "city:tokyo-jp"),
+        ("\u9996\u5c14", "city:seoul-kr"),
+        ("\u66fc\u8c37", "city:bangkok-th"),
+        ("\u65b0\u52a0\u5761", "city:singapore-sg"),
+        ("\u5409\u9686\u5761", "city:kuala-lumpur-my"),
+        ("\u4f26\u6566", "city:london-gb"),
+        ("\u7ebd\u7ea6", "city:new-york-us"),
+    ],
+)
+def test_real_chinese_alias_matching(query: str, expected: str) -> None:
+    assert place_service.search(query)[0].id == expected
+
+
+def test_partial_iata_or_city_input_finds_melbourne_related_results() -> None:
+    results = place_service.search("mel")
+    ids = [item.id for item in results[:4]]
+    assert "city:melbourne-au" in ids
+    assert "airport:MEL" in ids
+    assert "airport:AVV" in ids
+
+
+def test_chinese_city_input_returns_city_and_airport_suggestions() -> None:
+    shanghai_ids = [item.id for item in place_service.search("\u4e0a\u6d77")[:3]]
+    melbourne_ids = [item.id for item in place_service.search("\u58a8\u5c14\u672c")[:3]]
+    assert shanghai_ids == ["city:shanghai-cn", "airport:PVG", "airport:SHA"]
+    assert melbourne_ids == ["city:melbourne-au", "airport:MEL", "airport:AVV"]
+
+
 def test_exact_iata_code_matching_prioritizes_airport() -> None:
     result = place_service.search("PVG")[0]
     assert result.type == PlaceType.airport

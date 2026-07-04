@@ -5,13 +5,13 @@ export default defineConfig({
   timeout: 60_000,
   expect: { timeout: 15_000 },
   use: {
-    baseURL: "http://127.0.0.1:3010",
+    baseURL: "http://127.0.0.1:8081",
     trace: "on-first-retry",
   },
   webServer: [
     {
-      command: "powershell -NoProfile -Command \"$env:NEXT_PUBLIC_API_URL='http://127.0.0.1:8010'; npm run dev -- --hostname 127.0.0.1 --port 3010\"",
-      url: "http://127.0.0.1:3010",
+      command: "powershell -NoProfile -Command \"$env:NEXT_PUBLIC_API_BASE_URL='http://127.0.0.1:8010'; npm run dev -- --hostname 127.0.0.1 --port 8081\"",
+      url: "http://127.0.0.1:8081",
       reuseExistingServer: false,
       timeout: 120_000,
     },

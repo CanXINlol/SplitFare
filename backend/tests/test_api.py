@@ -1,6 +1,9 @@
+from dataclasses import replace
+
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
+import app.main as main_module
 from app.config import Settings
 from app.db import SessionLocal
 from app.db_models import SearchEventRecord
@@ -8,6 +11,21 @@ from app.main import app, build_supplier_adapters
 
 
 client = TestClient(app)
+
+
+@app.get("/_test-error")
+def _test_error() -> None:
+    raise RuntimeError("raw secret stack detail")
+
+
+def test_health_endpoint_exposes_deployment_shape() -> None:
+    response = client.get("/health")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "ok"
+    assert body["version"]
+    assert body["mode"] in {"mock", "live"}
+    assert body["timestamp"]
 
 
 def test_place_search_api_supports_english_and_chinese_aliases() -> None:
@@ -30,7 +48,37 @@ def test_place_resolve_api_wraps_airport_as_resolved_place() -> None:
 def test_invalid_place_returns_user_friendly_404() -> None:
     response = client.post("/api/places/resolve", json={"placeId": "place:missing"})
     assert response.status_code == 404
-    assert "Choose a city or airport" in response.json()["detail"]
+    assert "Choose a city or airport" in response.json()["error"]["message"]
+
+
+def test_rate_limit_applies_to_search_endpoint(monkeypatch) -> None:
+    monkeypatch.setattr(
+        main_module,
+        "settings",
+        replace(main_module.settings, rate_limit_requests_per_minute=1),
+    )
+    main_module._rate_limit_hits.clear()
+    payload = {
+        "originPlaceId": "airport:SYD", "destinationPlaceId": "airport:LHR",
+        "departureDate": "2026-08-12", "minGapHours": 3, "maxGapHours": 12,
+        "passengers": 1, "cabin": "economy", "candidateHubs": [],
+    }
+    assert client.post("/api/search", json=payload).status_code == 200
+    limited = client.post("/api/search", json=payload)
+    assert limited.status_code == 429
+    assert limited.json()["error"]["code"] == "rate_limited"
+    main_module._rate_limit_hits.clear()
+
+
+def test_production_error_response_hides_raw_exception(monkeypatch) -> None:
+    monkeypatch.setattr(main_module, "settings", replace(main_module.settings, app_env="production"))
+    safe_client = TestClient(app, raise_server_exceptions=False)
+    response = safe_client.get("/_test-error")
+    assert response.status_code == 500
+    body = response.json()
+    assert body["error"]["code"] == "internal_error"
+    assert body["error"]["message"] == "Internal server error."
+    assert "raw secret stack detail" not in str(body)
 
 
 def test_search_api_uses_camel_case_contract() -> None:
@@ -62,6 +110,7 @@ def test_search_api_uses_camel_case_contract() -> None:
         if option["label"] == "Check on Trip.com"
     )
     assert trip_option["priceConfidence"] == "check_required"
+    assert trip_option["priceStatus"] == "redirect_only"
     assert trip_option["priceAmount"] is None
     assert "tracking_id=SPLITFARE_PLACEHOLDER" in trip_option["url"]
     assert body["cheapestSplit"]["priceSourceCoverage"]["checkRequiredSupplierCount"] >= 1
@@ -113,7 +162,8 @@ def test_duffel_verify_endpoint_exists_in_mock_mode() -> None:
     response = client.post("/api/offers/Duffel/off_live_123/verify")
     assert response.status_code == 200
     body = response.json()
-    assert body["status"] == "not_configured"
+    assert body["status"] == "unsupported"
+    assert body["supported"] is False
     assert body["isConfirmed"] is False
 
 

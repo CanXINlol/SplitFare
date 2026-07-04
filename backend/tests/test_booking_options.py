@@ -10,6 +10,7 @@ from app.models import (
     BookingOption,
     BookingOptionType,
     PriceConfidence,
+    PriceStatus,
     SearchRequest,
     Supplier,
 )
@@ -47,8 +48,36 @@ def test_trip_com_booking_option_is_returned_with_tracking_id_and_unconfirmed_pr
     assert all(option.label == "Check on Trip.com" for option in trip_options)
     assert all(option.tracking_id == TRIP_COM_TRACKING_ID for option in trip_options)
     assert all(option.price_confidence == PriceConfidence.check_required for option in trip_options)
+    assert all(option.price_status == PriceStatus.redirect_only for option in trip_options)
     assert all(option.price_amount is None for option in trip_options)
     assert all("tracking_id=SPLITFARE_PLACEHOLDER" in str(option.url) for option in trip_options)
+
+
+def test_skyscanner_booking_option_is_redirect_only() -> None:
+    response = search(request())
+    options = [
+        option
+        for itinerary in response.ranked_results
+        for option in itinerary.booking_options
+        if option.type == BookingOptionType.skyscanner
+    ]
+    assert options
+    assert all(option.price_status == PriceStatus.redirect_only for option in options)
+    assert all(option.price_amount is None for option in options)
+    assert all(option.verification_required for option in options)
+
+
+def test_mock_supplier_booking_option_has_confirmed_price_status() -> None:
+    response = search(request())
+    supplier_options = [
+        option
+        for itinerary in response.ranked_results
+        for option in itinerary.booking_options
+        if option.type == BookingOptionType.supplier
+    ]
+    assert supplier_options
+    assert all(option.price_status == PriceStatus.confirmed for option in supplier_options)
+    assert all(option.price_amount is not None for option in supplier_options)
 
 
 def test_trip_com_deep_link_does_not_create_fare_offers_or_affect_sorting() -> None:

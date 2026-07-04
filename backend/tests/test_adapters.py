@@ -15,6 +15,7 @@ from app.config import Settings
 from app.models import (
     Cabin,
     NormalizedFlightOffer,
+    PriceStatus,
     SearchRequest,
     Supplier,
     VerificationStatus,
@@ -61,6 +62,8 @@ def test_base_search_always_calls_normalize_before_returning() -> None:
 def test_mock_price_verification_is_deterministic() -> None:
     result = MockSupplierAdapter().verify_price("offer-direct-mu")
     assert result.status == VerificationStatus.verified
+    assert result.price_status == PriceStatus.confirmed
+    assert result.supported is True
     assert result.price_amount == 1120
     assert result.currency == "AUD"
 
@@ -77,7 +80,9 @@ def test_optional_multi_city_defaults_to_unsupported() -> None:
 def test_external_supplier_skeletons_are_not_configured(adapter) -> None:
     with pytest.raises(AdapterNotConfiguredError):
         one_way(adapter)
-    assert adapter.verify_price("future-offer").status == VerificationStatus.not_configured
+    verification = adapter.verify_price("future-offer")
+    assert verification.status == VerificationStatus.unsupported
+    assert verification.supported is False
 
 
 def test_trip_com_adapter_only_builds_placeholder_deep_link() -> None:
@@ -92,8 +97,18 @@ def test_trip_com_adapter_only_builds_placeholder_deep_link() -> None:
 
 def test_trip_com_cannot_verify_prices() -> None:
     result = TripComAffiliateAdapter().verify_price("affiliate-link")
-    assert result.status == VerificationStatus.unavailable
+    assert result.status == VerificationStatus.unsupported
+    assert result.price_status == PriceStatus.redirect_only
+    assert result.supported is False
     assert result.price_amount is None
+
+
+def test_supplier_capability_flags_are_explicit() -> None:
+    assert MockSupplierAdapter().capabilities.supports_live_price is True
+    assert MockSupplierAdapter().capabilities.supports_price_verify is True
+    assert TripComAffiliateAdapter().capabilities.supports_affiliate_link is True
+    assert TripComAffiliateAdapter().capabilities.supports_live_price is False
+    assert SkyscannerSupplierAdapter().capabilities.supports_affiliate_link is True
 
 
 def test_orchestrator_combines_multiple_mock_suppliers() -> None:
@@ -107,6 +122,8 @@ def test_orchestrator_combines_multiple_mock_suppliers() -> None:
         Supplier.mock_sky, Supplier.demo_air,
     }
     assert outcome.failures == []
+    assert outcome.supplier_results
+    assert all(result.capabilities.supports_search for result in outcome.supplier_results)
 
 
 def test_one_supplier_failure_does_not_discard_other_results() -> None:
@@ -120,6 +137,7 @@ def test_one_supplier_failure_does_not_discard_other_results() -> None:
     assert {failure.supplier for failure in outcome.failures} == {
         Supplier.duffel, Supplier.skyscanner,
     }
+    assert any(result.errors for result in outcome.supplier_results)
 
 
 def test_orchestrator_rejects_supplier_mismatch_without_breaking_others() -> None:

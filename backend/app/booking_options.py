@@ -7,6 +7,7 @@ from app.models import (
     Itinerary,
     PriceConfidence,
     PriceSourceCoverage,
+    PriceStatus,
     SearchRequest,
     Supplier,
 )
@@ -42,41 +43,58 @@ def build_booking_options(request: SearchRequest, itinerary: Itinerary) -> list[
         BookingOption(
             type=BookingOptionType.airline,
             label="Book with airline",
+            display_name="Book with airline",
             supplier=first_offer.supplier,
             url=first_offer.booking_url,
             price_amount=itinerary.total_price,
             currency=itinerary.currency,
             price_confidence=PriceConfidence.confirmed,
+            price_status=PriceStatus.confirmed,
+            verification_required=True,
             last_checked_at=itinerary.last_checked_at,
             expires_at=itinerary.expires_at,
+            warnings=["Price may change before checkout."],
             notes=notes,
         ),
         BookingOption(
             type=BookingOptionType.trip_com,
             label="Check on Trip.com",
+            display_name="Check on Trip.com",
             supplier=Supplier.trip_com_affiliate,
             url=trip_link,
             price_confidence=PriceConfidence.check_required,
+            price_status=PriceStatus.redirect_only,
+            verification_required=True,
             tracking_id=TRIP_COM_TRACKING_ID,
+            warnings=[TRIP_COM_UNCONFIRMED_NOTE, PRICE_MAY_CHANGE_NOTE],
             notes=[TRIP_COM_UNCONFIRMED_NOTE, *notes],
         ),
         BookingOption(
             type=BookingOptionType.skyscanner,
             label="Check on Skyscanner",
+            display_name="Check on Skyscanner",
             supplier=Supplier.skyscanner,
-            price_confidence=PriceConfidence.unavailable,
+            url="https://example.invalid/skyscanner-redirect?tracking_id=SPLITFARE_PLACEHOLDER",
+            price_confidence=PriceConfidence.check_required,
+            price_status=PriceStatus.redirect_only,
+            verification_required=True,
+            warnings=["Skyscanner redirect-only option in this demo.", PRICE_MAY_CHANGE_NOTE],
             notes=[SKYSCANNER_UNCONFIGURED_NOTE, *notes],
         ),
         BookingOption(
             type=BookingOptionType.supplier,
             label="Check on supplier",
+            display_name="Check on supplier",
             supplier=first_offer.supplier,
             url=first_offer.booking_url,
             price_amount=itinerary.total_price,
             currency=itinerary.currency,
             price_confidence=PriceConfidence.confirmed,
+            price_status=PriceStatus.confirmed,
+            verification_required=True,
             last_checked_at=itinerary.last_checked_at,
             expires_at=itinerary.expires_at,
+            warnings=["Price may change before checkout."],
             notes=[f"Supplier itinerary source: {supplier_label}.", *notes],
         ),
     ]
@@ -84,12 +102,18 @@ def build_booking_options(request: SearchRequest, itinerary: Itinerary) -> list[
 
 def coverage_for_options(options: list[BookingOption]) -> PriceSourceCoverage:
     confirmed = [option for option in options if option.price_confidence == PriceConfidence.confirmed]
+    cached = [option for option in options if option.price_status == PriceStatus.cached]
+    estimated = [option for option in options if option.price_status == PriceStatus.estimated]
+    redirect_only = [option for option in options if option.price_status == PriceStatus.redirect_only]
     check_required = [
         option for option in options if option.price_confidence == PriceConfidence.check_required
     ]
     unavailable = [option for option in options if option.price_confidence == PriceConfidence.unavailable]
     return PriceSourceCoverage(
         confirmed_supplier_count=len(confirmed),
+        cached_supplier_count=len(cached),
+        estimated_supplier_count=len(estimated),
+        redirect_only_supplier_count=len(redirect_only),
         check_required_supplier_count=len(check_required),
         unavailable_supplier_count=len(unavailable),
         labels=[option.label for option in options],

@@ -314,6 +314,8 @@ Docker option:
 docker compose up --build
 ```
 
+Docker compose exposes the frontend at <http://localhost:8080> and the API at <http://localhost:8000>.
+
 ## Test and build
 
 ```powershell
@@ -375,6 +377,10 @@ Future live integrations should stay behind backend adapters and never expose AP
 ## Release checklist
 
 See `RELEASE_CHECKLIST.md`.
+
+## Deployment guide
+
+See `docs/DEPLOYMENT.md` for Vercel, Render, Fly.io, Railway, CORS, health check, and mock/live mode notes.
 
 ---
 

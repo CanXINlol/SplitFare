@@ -6,9 +6,11 @@ from app.adapters.base import SupplierAdapter
 from app.models import (
     Cabin,
     NormalizedFlightOffer,
-    PriceVerification,
+    PriceStatus,
     Supplier,
+    SupplierCapabilities,
     VerificationStatus,
+    VerifyPriceResult,
 )
 
 
@@ -19,6 +21,22 @@ class TripComAffiliateAdapter(SupplierAdapter):
     @property
     def name(self) -> Supplier:
         return Supplier.trip_com_affiliate
+
+    @property
+    def display_name(self) -> str:
+        return "Trip.com"
+
+    @property
+    def capabilities(self) -> SupplierCapabilities:
+        return SupplierCapabilities(
+            supports_search=False,
+            supports_price_verify=False,
+            supports_booking_url=True,
+            supports_baggage_info=False,
+            supports_split_ticket=False,
+            supports_live_price=False,
+            supports_affiliate_link=True,
+        )
 
     def build_deep_link(
         self, origin: str, destination: str, departure_date: date,
@@ -46,9 +64,11 @@ class TripComAffiliateAdapter(SupplierAdapter):
         # Affiliate skeleton intentionally has no fare payload to normalize.
         return []
 
-    def verify_price(self, offer_id: str) -> PriceVerification:
-        return PriceVerification(
-            offer_id=offer_id, supplier=self.name, status=VerificationStatus.unavailable,
+    def verify_price_result(self, offer_id: str) -> VerifyPriceResult:
+        return VerifyPriceResult(
+            offer_id=offer_id, supplier=self.name, status=VerificationStatus.unsupported,
+            price_status=PriceStatus.redirect_only,
+            supported=False,
             checked_at=datetime.now(timezone.utc),
             message="Affiliate deep links do not provide price verification.",
         )

@@ -129,5 +129,6 @@ def test_duffel_normalization_rejects_missing_price_currency_or_times() -> None:
 def test_duffel_verify_price_is_safe_stub_not_confirmed() -> None:
     adapter = configured_adapter(FakeHttpClient(duffel_payload()))
     result = adapter.verify_price("off_live_123")
-    assert result.status == VerificationStatus.unavailable
+    assert result.status == VerificationStatus.unsupported
+    assert result.supported is False
     assert result.is_confirmed is False

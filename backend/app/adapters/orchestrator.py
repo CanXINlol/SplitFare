@@ -1,7 +1,7 @@
 import asyncio
 import re
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime, timezone
 
 from app.adapters.base import SupplierAdapter
 from app.cache import RedisCache, flight_cache_key
@@ -12,8 +12,11 @@ from app.models import (
     SearchError,
     SearchRequest,
     Supplier,
+    SupplierError,
     SupplierFailure,
+    SupplierResult,
     SupplierSearchOutcome,
+    VerifyPriceResult,
 )
 
 
@@ -33,6 +36,7 @@ def sanitize_error_message(message: str) -> str:
 class RouteSearchResult:
     offers: tuple[NormalizedFlightOffer, ...]
     errors: tuple[SearchError, ...]
+    supplier_results: tuple[SupplierResult, ...] = ()
 
 
 class SupplierOrchestrator:
@@ -55,6 +59,7 @@ class SupplierOrchestrator:
         destination = place_service.resolve(request.destination_place_id).airports[0].iata_code
         offers: list[NormalizedFlightOffer] = []
         failures: list[SupplierFailure] = []
+        supplier_results: list[SupplierResult] = []
         for adapter in self.adapters:
             try:
                 normalized = adapter.search_one_way(
@@ -70,17 +75,41 @@ class SupplierOrchestrator:
                 if any(offer.supplier != adapter.name for offer in normalized):
                     raise ValueError("Normalized offer supplier does not match adapter name.")
                 offers.extend(normalized)
+                supplier_results.append(SupplierResult(
+                    supplier=adapter.name,
+                    offers=normalized,
+                    errors=[],
+                    capabilities=adapter.capabilities,
+                    fetched_at=datetime.now(timezone.utc),
+                ))
             except Exception as error:
+                supplier_error = SupplierError(
+                    supplier=adapter.name,
+                    code=type(error).__name__,
+                    message=sanitize_error_message(str(error)),
+                    retryable=False,
+                )
                 failures.append(SupplierFailure(
                     supplier=adapter.name,
-                    error_type=type(error).__name__,
-                    message=str(error),
+                    error_type=supplier_error.code,
+                    message=supplier_error.message,
+                ))
+                supplier_results.append(SupplierResult(
+                    supplier=adapter.name,
+                    offers=[],
+                    errors=[supplier_error],
+                    capabilities=adapter.capabilities,
+                    fetched_at=datetime.now(timezone.utc),
                 ))
 
         unique: dict[tuple[str, str], NormalizedFlightOffer] = {}
         for offer in offers:
             unique.setdefault((offer.supplier.value, offer.id), offer)
-        return SupplierSearchOutcome(offers=list(unique.values()), failures=failures)
+        return SupplierSearchOutcome(
+            offers=list(unique.values()),
+            failures=failures,
+            supplier_results=supplier_results,
+        )
 
     async def _query_adapter(
         self,
@@ -143,6 +172,13 @@ class SupplierOrchestrator:
             return RouteSearchResult(
                 offers=tuple(normalized[: self.max_offers_per_supplier_leg]),
                 errors=(),
+                supplier_results=(SupplierResult(
+                    supplier=adapter.name,
+                    offers=list(normalized[: self.max_offers_per_supplier_leg]),
+                    errors=[],
+                    capabilities=adapter.capabilities,
+                    fetched_at=datetime.now(timezone.utc),
+                ),),
             )
         except TimeoutError:
             error = SearchError(
@@ -152,6 +188,12 @@ class SupplierOrchestrator:
                 code="supplier_timeout",
                 message=f"{adapter.name.value} exceeded the supplier timeout.",
             )
+            supplier_error = SupplierError(
+                supplier=adapter.name,
+                code=error.code,
+                message=error.message,
+                retryable=True,
+            )
         except Exception as exception:
             error = SearchError(
                 supplier=adapter.name,
@@ -160,7 +202,23 @@ class SupplierOrchestrator:
                 code=type(exception).__name__,
                 message=sanitize_error_message(str(exception)),
             )
-        return RouteSearchResult(offers=(), errors=(error,))
+            supplier_error = SupplierError(
+                supplier=adapter.name,
+                code=error.code,
+                message=error.message,
+                retryable=False,
+            )
+        return RouteSearchResult(
+            offers=(),
+            errors=(error,),
+            supplier_results=(SupplierResult(
+                supplier=adapter.name,
+                offers=[],
+                errors=[supplier_error],
+                capabilities=adapter.capabilities,
+                fetched_at=datetime.now(timezone.utc),
+            ),),
+        )
 
     async def search_route(
         self,
@@ -179,10 +237,11 @@ class SupplierOrchestrator:
         ))
         offers = tuple(offer for result in results for offer in result.offers)
         errors = tuple(error for result in results for error in result.errors)
-        return RouteSearchResult(offers=offers, errors=errors)
+        supplier_results = tuple(item for result in results for item in result.supplier_results)
+        return RouteSearchResult(offers=offers, errors=errors, supplier_results=supplier_results)
 
-    def verify_price(self, supplier: Supplier, offer_id: str) -> PriceVerification:
+    def verify_price(self, supplier: Supplier, offer_id: str) -> VerifyPriceResult:
         adapter = next((item for item in self.adapters if item.name == supplier), None)
         if adapter is None:
             raise ValueError(f"Unknown supplier: {supplier.value}")
-        return adapter.verify_price(offer_id)
+        return adapter.verify_price_result(offer_id)

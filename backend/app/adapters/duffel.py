@@ -9,10 +9,12 @@ from app.config import Settings, load_settings
 from app.models import (
     Cabin,
     NormalizedFlightOffer,
-    PriceVerification,
+    PriceStatus,
     Segment,
     Supplier,
+    SupplierCapabilities,
     VerificationStatus,
+    VerifyPriceResult,
 )
 
 
@@ -63,6 +65,19 @@ class DuffelSupplierAdapter(SupplierAdapter):
     @property
     def name(self) -> Supplier:
         return Supplier.duffel
+
+    @property
+    def capabilities(self) -> SupplierCapabilities:
+        configured = bool(self.settings.duffel_api_token)
+        return SupplierCapabilities(
+            supports_search=configured,
+            supports_price_verify=False,
+            supports_booking_url=False,
+            supports_baggage_info=False,
+            supports_split_ticket=False,
+            supports_live_price=configured,
+            supports_affiliate_link=False,
+        )
 
     def _fetch_one_way(
         self, origin: str, destination: str, departure_date: date,
@@ -181,15 +196,19 @@ class DuffelSupplierAdapter(SupplierAdapter):
             ))
         return normalized
 
-    def verify_price(self, offer_id: str) -> PriceVerification:
+    def verify_price_result(self, offer_id: str) -> VerifyPriceResult:
         if not self.settings.duffel_api_token:
-            return PriceVerification(
-                offer_id=offer_id, supplier=self.name, status=VerificationStatus.not_configured,
+            return VerifyPriceResult(
+                offer_id=offer_id, supplier=self.name, status=VerificationStatus.unsupported,
+                price_status=PriceStatus.unavailable,
+                supported=False,
                 checked_at=datetime.now(timezone.utc),
                 message="Duffel price verification is not configured because DUFFEL_API_TOKEN is not set.",
             )
-        return PriceVerification(
-            offer_id=offer_id, supplier=self.name, status=VerificationStatus.unavailable,
+        return VerifyPriceResult(
+            offer_id=offer_id, supplier=self.name, status=VerificationStatus.unsupported,
+            price_status=PriceStatus.unavailable,
+            supported=False,
             checked_at=datetime.now(timezone.utc),
             message="Duffel adapter is configured, but live price verification is a safe stub in Phase 8.",
         )

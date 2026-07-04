@@ -1,9 +1,14 @@
+import logging
+import time
 from datetime import datetime, timezone
 from typing import Any
+from uuid import uuid4
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.adapters.duffel import DuffelSupplierAdapter
 from app.adapters.mock_supplier import MockSupplierAdapter
@@ -17,12 +22,13 @@ from app.models import (
     PlaceSearchResponse,
     PreBookingVerificationRequest,
     PreBookingVerificationResponse,
-    PriceVerification,
+    PriceStatus,
     ResolvePlaceRequest,
     ResolvedPlace,
     SearchRequest,
     SearchResponse,
     VerificationStatus,
+    VerifyPriceResult,
 )
 from app.models import Supplier
 from app.places import place_service
@@ -30,31 +36,40 @@ from app.repositories import SearchPersistenceService
 from app.search import SearchService
 from app.search_orchestrator import SearchOrchestrator
 
-app = FastAPI(title="SplitFare Mock API", version="0.1.0")
+
+settings = load_settings()
+logging.basicConfig(
+    level=getattr(logging, settings.log_level, logging.INFO),
+    format="%(asctime)s %(levelname)s %(name)s %(message)s",
+)
+logger = logging.getLogger("splitfare.api")
+
+app = FastAPI(
+    title="SplitFare API",
+    version=settings.app_version,
+    debug=not settings.is_production,
+)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
-        "http://localhost:3010",
-        "http://127.0.0.1:3010",
-    ],
+    allow_origins=list(settings.frontend_origins),
     allow_credentials=False,
     allow_methods=["GET", "POST"],
     allow_headers=["Content-Type"],
 )
 init_database()
-settings = load_settings()
 cache = RedisCache.from_env()
+
+_rate_limit_hits: dict[str, list[float]] = {}
 
 
 def build_supplier_adapters(settings: Settings):
-    adapters = [
-        MockSupplierAdapter(Supplier.mock_sky),
-        MockSupplierAdapter(Supplier.demo_air),
-        MockSupplierAdapter(Supplier.budget_demo),
-        TripComAffiliateAdapter(),
-    ]
+    adapters = [TripComAffiliateAdapter()]
+    if settings.enable_mock_supplier:
+        adapters.extend([
+            MockSupplierAdapter(Supplier.mock_sky),
+            MockSupplierAdapter(Supplier.demo_air),
+            MockSupplierAdapter(Supplier.budget_demo),
+        ])
     if settings.duffel_enabled:
         adapters.append(DuffelSupplierAdapter(settings))
     return adapters
@@ -79,9 +94,99 @@ def remove_raw_payload(value: Any) -> Any:
     return value
 
 
+def error_response(
+    *,
+    request: Request,
+    status_code: int,
+    code: str,
+    message: str,
+) -> JSONResponse:
+    return JSONResponse(
+        status_code=status_code,
+        content={
+            "error": {
+                "code": code,
+                "message": message,
+                "requestId": getattr(request.state, "request_id", None),
+            }
+        },
+    )
+
+
+@app.middleware("http")
+async def request_context_and_rate_limit(request: Request, call_next):
+    request.state.request_id = str(uuid4())
+    if request.url.path == "/api/search" and request.method == "POST":
+        client = request.client.host if request.client else "unknown"
+        now = time.monotonic()
+        window_start = now - 60
+        hits = [item for item in _rate_limit_hits.get(client, []) if item >= window_start]
+        if len(hits) >= settings.rate_limit_requests_per_minute:
+            return error_response(
+                request=request,
+                status_code=429,
+                code="rate_limited",
+                message="Too many search requests. Please wait and try again.",
+            )
+        hits.append(now)
+        _rate_limit_hits[client] = hits
+    try:
+        response = await call_next(request)
+    except Exception as exc:
+        logger.exception("unhandled_exception request_id=%s", request.state.request_id)
+        return error_response(
+            request=request,
+            status_code=500,
+            code="internal_error",
+            message="Internal server error." if settings.is_production else str(exc),
+        )
+    response.headers["X-Request-ID"] = request.state.request_id
+    return response
+
+
+@app.exception_handler(StarletteHTTPException)
+async def http_exception_handler(request: Request, exc: StarletteHTTPException) -> JSONResponse:
+    message = str(exc.detail) if exc.detail else "Request failed."
+    return error_response(
+        request=request,
+        status_code=exc.status_code,
+        code="http_error",
+        message=message,
+    )
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
+    message = "Request validation failed."
+    if not settings.is_production and exc.errors():
+        message = str(exc.errors()[0].get("msg", message))
+    return error_response(
+        request=request,
+        status_code=422,
+        code="validation_error",
+        message=message,
+    )
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+    logger.exception("unhandled_exception request_id=%s", getattr(request.state, "request_id", None))
+    return error_response(
+        request=request,
+        status_code=500,
+        code="internal_error",
+        message="Internal server error." if settings.is_production else str(exc),
+    )
+
+
 @app.get("/health")
 def health() -> dict[str, str]:
-    return {"status": "ok"}
+    return {
+        "status": "ok",
+        "version": settings.app_version,
+        "mode": settings.app_mode,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
 
 
 @app.get("/api/places/search", response_model=PlaceSearchResponse)
@@ -102,13 +207,14 @@ async def search(request: SearchRequest, debug: bool = False) -> JSONResponse:
     try:
         result = await service.search(request)
         payload = result.model_dump(mode="json", by_alias=True)
-        return JSONResponse(payload if debug else remove_raw_payload(payload))
+        allow_debug = debug and not settings.is_production
+        return JSONResponse(payload if allow_debug else remove_raw_payload(payload))
     except ValueError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
 
 
-@app.post("/api/offers/{supplier}/{offer_id}/verify", response_model=PriceVerification)
-def verify_price(supplier: Supplier, offer_id: str) -> PriceVerification:
+@app.post("/api/offers/{supplier}/{offer_id}/verify", response_model=VerifyPriceResult)
+def verify_price(supplier: Supplier, offer_id: str) -> VerifyPriceResult:
     try:
         return supplier_orchestrator.verify_price(supplier, offer_id)
     except ValueError as error:
@@ -130,7 +236,7 @@ def _record_booking_event(
 
 def _verify_supplier_price(
     supplier: Supplier, offer_id: str | None
-) -> PriceVerification | None:
+) -> VerifyPriceResult | None:
     if not offer_id:
         return None
     try:
@@ -181,7 +287,11 @@ def verify_booking_option(
                 can_continue=False,
             )
         else:
-            still_available = verification.status == VerificationStatus.verified and verification.is_confirmed
+            still_available = (
+                verification.status == VerificationStatus.verified
+                and verification.price_status == PriceStatus.confirmed
+                and verification.is_confirmed
+            )
             current_price = verification.price_amount if still_available else None
             currency = verification.currency or request.currency
             price_changed = (
@@ -199,7 +309,7 @@ def verify_booking_option(
                 checked_at=verification.checked_at,
                 expires_at=verification.expires_at,
                 status=verification.status,
-                message=verification.message if still_available else "Price or availability could not be confirmed.",
+                message=verification.message if still_available else verification.message,
                 can_continue=still_available and request.booking_url is not None,
             )
 

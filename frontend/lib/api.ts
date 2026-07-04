@@ -7,7 +7,19 @@ import type {
   SearchResponse,
 } from "./types";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+const API_URL = (
+  process.env.NEXT_PUBLIC_API_BASE_URL
+  ?? process.env.NEXT_PUBLIC_API_URL
+  ?? "http://localhost:8000"
+).replace(/\/$/, "");
+
+async function responseError(response: Response, fallback: string): Promise<Error> {
+  const body = (await response.json().catch(() => null)) as {
+    detail?: string;
+    error?: { message?: string };
+  } | null;
+  return new Error(body?.error?.message ?? body?.detail ?? fallback);
+}
 
 export async function searchFlights(input: SearchInput, signal?: AbortSignal): Promise<SearchResponse> {
   const response = await fetch(`${API_URL}/api/search`, {
@@ -17,8 +29,7 @@ export async function searchFlights(input: SearchInput, signal?: AbortSignal): P
     signal,
   });
   if (!response.ok) {
-    const body = (await response.json().catch(() => null)) as { detail?: string } | null;
-    throw new Error(body?.detail ?? "Search failed. Is the API running?");
+    throw await responseError(response, "Search failed. Is the API running?");
   }
   return response.json() as Promise<SearchResponse>;
 }
@@ -39,8 +50,7 @@ export async function resolvePlace(placeId: string, signal?: AbortSignal): Promi
     signal,
   });
   if (!response.ok) {
-    const body = (await response.json().catch(() => null)) as { detail?: string } | null;
-    throw new Error(body?.detail ?? "Could not resolve this place.");
+    throw await responseError(response, "Could not resolve this place.");
   }
   return response.json() as Promise<ResolvedPlace>;
 }
@@ -56,8 +66,7 @@ export async function verifyBookingOption(
     signal,
   });
   if (!response.ok) {
-    const body = (await response.json().catch(() => null)) as { detail?: string } | null;
-    throw new Error(body?.detail ?? "Could not verify this booking option.");
+    throw await responseError(response, "Could not verify this booking option.");
   }
   return response.json() as Promise<PreBookingVerificationResponse>;
 }

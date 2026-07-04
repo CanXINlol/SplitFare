@@ -67,6 +67,14 @@ Run from the repository root unless noted.
 ## Deployment readiness
 
 - [ ] `README.md` reflects current setup, run, test, and mock limitations.
+- [ ] `docs/DEPLOYMENT.md` has current Vercel and backend hosting instructions.
+- [ ] `.env.example`, `frontend/.env.example`, and `backend/.env.example` are current.
+- [ ] `GET /health` returns `status`, `version`, `mode`, and `timestamp`.
+- [ ] Production `FRONTEND_ORIGIN` is explicit; wildcard CORS is not used.
+- [ ] `NEXT_PUBLIC_API_BASE_URL` points to the deployed backend.
+- [ ] `APP_ENV=production` does not expose raw stack traces or debug payloads.
+- [ ] `ENABLE_MOCK_SUPPLIER` is intentionally set for the deployment mode.
+- [ ] Search rate limiting is enabled with an appropriate `RATE_LIMIT_REQUESTS_PER_MINUTE`.
 - [ ] Environment variables are documented and no secret is committed.
 - [ ] Database migrations run successfully if Postgres persistence is enabled.
 - [ ] Redis is optional; app works when cache is unavailable.

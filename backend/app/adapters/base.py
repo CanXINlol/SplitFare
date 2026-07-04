@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from datetime import date
+from datetime import date, datetime, timezone
 from typing import Any
 
 from app.cache import CachePolicy, default_supplier_cache_policy
@@ -8,7 +8,10 @@ from app.models import (
     FlightSlice,
     NormalizedFlightOffer,
     PriceVerification,
+    SupplierCapabilities,
     Supplier,
+    VerificationStatus,
+    VerifyPriceResult,
 )
 
 
@@ -31,6 +34,14 @@ class SupplierAdapter(ABC):
     @abstractmethod
     def name(self) -> Supplier:
         raise NotImplementedError
+
+    @property
+    def display_name(self) -> str:
+        return self.name.value
+
+    @property
+    def capabilities(self) -> SupplierCapabilities:
+        return SupplierCapabilities()
 
     @property
     def cache_policy(self) -> CachePolicy:
@@ -87,6 +98,15 @@ class SupplierAdapter(ABC):
     def normalize(self, raw_response: Any) -> list[NormalizedFlightOffer]:
         raise NotImplementedError
 
-    @abstractmethod
+    def verify_price_result(self, offer_id: str) -> VerifyPriceResult:
+        return VerifyPriceResult(
+            offer_id=offer_id,
+            supplier=self.name,
+            status=VerificationStatus.unsupported,
+            supported=False,
+            checked_at=datetime.now(timezone.utc),
+            message=f"{self.name.value} does not support price verification.",
+        )
+
     def verify_price(self, offer_id: str) -> PriceVerification:
-        raise NotImplementedError
+        return self.verify_price_result(offer_id)

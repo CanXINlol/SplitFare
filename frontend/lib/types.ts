@@ -63,6 +63,14 @@ export enum PriceConfidence {
   Unavailable = "unavailable",
 }
 
+export enum PriceStatus {
+  Confirmed = "confirmed",
+  Cached = "cached",
+  Estimated = "estimated",
+  RedirectOnly = "redirect_only",
+  Unavailable = "unavailable",
+}
+
 export interface SearchRequest {
   originPlaceId: string;
   destinationPlaceId: string;
@@ -174,19 +182,27 @@ export interface PriceFreshness {
 export interface BookingOption {
   type: BookingOptionType;
   label: string;
+  displayName: string | null;
   supplier: Supplier | null;
   url: string | null;
+  bookingUrl: string | null;
   priceAmount: number | null;
   currency: string | null;
   priceConfidence: PriceConfidence;
+  priceStatus: PriceStatus;
+  verificationRequired: boolean;
   trackingId: string | null;
   lastCheckedAt: string | null;
   expiresAt: string | null;
   notes: string[];
+  warnings: string[];
 }
 
 export interface PriceSourceCoverage {
   confirmedSupplierCount: number;
+  cachedSupplierCount: number;
+  estimatedSupplierCount: number;
+  redirectOnlySupplierCount: number;
   checkRequiredSupplierCount: number;
   unavailableSupplierCount: number;
   labels: string[];
@@ -222,11 +238,14 @@ export interface PriceVerification {
   offerId: string;
   supplier: Supplier;
   status: VerificationStatus;
+  priceStatus: PriceStatus;
   priceAmount: number | null;
   currency: string | null;
   checkedAt: string;
   expiresAt: string | null;
   isConfirmed: boolean;
+  supported: boolean;
+  bookingUrl: string | null;
   message: string;
 }
 

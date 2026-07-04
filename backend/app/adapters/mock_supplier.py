@@ -7,11 +7,13 @@ from app.data.mock_flights import MOCK_FLIGHTS
 from app.models import (
     Cabin,
     NormalizedFlightOffer,
-    PriceVerification,
+    PriceStatus,
     SearchRequest,
     Segment,
     Supplier,
+    SupplierCapabilities,
     VerificationStatus,
+    VerifyPriceResult,
 )
 
 
@@ -24,6 +26,17 @@ class MockSupplierAdapter(SupplierAdapter):
     @property
     def name(self) -> Supplier:
         return self._name
+
+    @property
+    def capabilities(self) -> SupplierCapabilities:
+        return SupplierCapabilities(
+            supports_search=True,
+            supports_price_verify=True,
+            supports_booking_url=False,
+            supports_baggage_info=True,
+            supports_split_ticket=True,
+            supports_live_price=True,
+        )
 
     @property
     def cache_policy(self) -> CachePolicy:
@@ -110,17 +123,18 @@ class MockSupplierAdapter(SupplierAdapter):
             )
         return offers
 
-    def verify_price(self, offer_id: str) -> PriceVerification:
+    def verify_price_result(self, offer_id: str) -> VerifyPriceResult:
         fixture_id = offer_id.removeprefix("offer-")
         flight = next(
             (item for item in MOCK_FLIGHTS if item.id == fixture_id and item.supplier == self.name),
             None,
         )
         checked_at = datetime.now(timezone.utc)
-        return PriceVerification(
+        return VerifyPriceResult(
             offer_id=offer_id,
             supplier=self.name,
             status=VerificationStatus.verified if flight else VerificationStatus.unavailable,
+            price_status=PriceStatus.confirmed if flight else PriceStatus.unavailable,
             price_amount=flight.price if flight else None,
             currency="AUD" if flight else None,
             checked_at=checked_at,

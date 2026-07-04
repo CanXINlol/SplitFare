@@ -54,6 +54,7 @@ class VerificationStatus(str, Enum):
     expired = "expired"
     unavailable = "unavailable"
     not_configured = "not_configured"
+    unsupported = "unsupported"
 
 
 class BookingOptionType(str, Enum):
@@ -66,6 +67,14 @@ class BookingOptionType(str, Enum):
 class PriceConfidence(str, Enum):
     confirmed = "confirmed"
     check_required = "check_required"
+    unavailable = "unavailable"
+
+
+class PriceStatus(str, Enum):
+    confirmed = "confirmed"
+    cached = "cached"
+    estimated = "estimated"
+    redirect_only = "redirect_only"
     unavailable = "unavailable"
 
 
@@ -229,12 +238,30 @@ class PriceVerification(ApiModel):
     offer_id: str
     supplier: Supplier
     status: VerificationStatus
+    price_status: PriceStatus = PriceStatus.unavailable
     price_amount: float | None = Field(default=None, gt=0)
     currency: str | None = Field(default=None, pattern=r"^[A-Z]{3}$")
     checked_at: datetime
     expires_at: datetime | None = None
     is_confirmed: bool = False
+    supported: bool = True
+    booking_url: HttpUrl | None = None
     message: str
+
+    @model_validator(mode="before")
+    @classmethod
+    def infer_price_status(cls, value: object) -> object:
+        if not isinstance(value, dict) or "price_status" in value or "priceStatus" in value:
+            return value
+        data = dict(value)
+        status = data.get("status")
+        if status == VerificationStatus.verified or status == VerificationStatus.verified.value:
+            data["priceStatus"] = PriceStatus.confirmed
+        elif status == VerificationStatus.expired or status == VerificationStatus.expired.value:
+            data["priceStatus"] = PriceStatus.cached
+        else:
+            data["priceStatus"] = PriceStatus.unavailable
+        return data
 
     @field_validator("checked_at", "expires_at")
     @classmethod
@@ -249,6 +276,7 @@ class PriceVerification(ApiModel):
             raise ValueError("expires_at must be later than checked_at")
         is_confirmed = (
             self.status == VerificationStatus.verified
+            and self.price_status == PriceStatus.confirmed
             and self.price_amount is not None
             and self.currency is not None
             and self.expires_at is not None
@@ -256,6 +284,10 @@ class PriceVerification(ApiModel):
         )
         object.__setattr__(self, "is_confirmed", is_confirmed)
         return self
+
+
+class VerifyPriceResult(PriceVerification):
+    pass
 
 
 class PreBookingVerificationRequest(ApiModel):
@@ -297,6 +329,38 @@ class SupplierFailure(ApiModel):
     supplier: Supplier
     error_type: str
     message: str
+
+
+class SupplierCapabilities(ApiModel):
+    supports_search: bool = False
+    supports_price_verify: bool = False
+    supports_booking_url: bool = False
+    supports_baggage_info: bool = False
+    supports_split_ticket: bool = False
+    supports_live_price: bool = False
+    supports_affiliate_link: bool = False
+
+
+class SupplierError(ApiModel):
+    supplier: Supplier
+    code: str
+    message: str
+    retryable: bool = False
+
+
+class SupplierResult(ApiModel):
+    supplier: Supplier
+    offers: list["NormalizedFlightOffer"] = Field(default_factory=list)
+    errors: list[SupplierError] = Field(default_factory=list)
+    capabilities: SupplierCapabilities
+    fetched_at: datetime
+
+    @field_validator("fetched_at")
+    @classmethod
+    def require_timezone(cls, value: datetime) -> datetime:
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("supplier result fetched_at must include a timezone")
+        return value
 
 
 class FlightQuery(ApiModel):
@@ -347,15 +411,42 @@ class PriceFreshness(ApiModel):
 class BookingOption(ApiModel):
     type: BookingOptionType
     label: str = Field(min_length=1)
+    display_name: str | None = None
     supplier: Supplier | None = None
     url: HttpUrl | None = None
+    booking_url: HttpUrl | None = None
     price_amount: float | None = Field(default=None, gt=0, allow_inf_nan=False)
     currency: str | None = Field(default=None, pattern=r"^[A-Z]{3}$")
     price_confidence: PriceConfidence
+    price_status: PriceStatus = PriceStatus.unavailable
+    verification_required: bool = True
     tracking_id: str | None = None
     last_checked_at: datetime | None = None
     expires_at: datetime | None = None
     notes: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="before")
+    @classmethod
+    def sync_legacy_and_final_fields(cls, value: object) -> object:
+        if not isinstance(value, dict):
+            return value
+        data = dict(value)
+        if "display_name" not in data and "displayName" not in data and "label" in data:
+            data["displayName"] = data["label"]
+        if "booking_url" not in data and "bookingUrl" not in data and "url" in data:
+            data["bookingUrl"] = data["url"]
+        if "url" not in data and "bookingUrl" in data:
+            data["url"] = data["bookingUrl"]
+        if "price_status" not in data and "priceStatus" not in data:
+            confidence = data.get("price_confidence", data.get("priceConfidence"))
+            if confidence == PriceConfidence.confirmed or confidence == PriceConfidence.confirmed.value:
+                data["priceStatus"] = PriceStatus.confirmed
+            elif confidence == PriceConfidence.check_required or confidence == PriceConfidence.check_required.value:
+                data["priceStatus"] = PriceStatus.redirect_only
+            else:
+                data["priceStatus"] = PriceStatus.unavailable
+        return data
 
     @field_validator("last_checked_at", "expires_at")
     @classmethod
@@ -366,9 +457,22 @@ class BookingOption(ApiModel):
 
     @model_validator(mode="after")
     def validate_price_confidence(self) -> BookingOption:
-        if self.type == BookingOptionType.trip_com and self.price_confidence == PriceConfidence.confirmed:
+        if self.url is None and self.booking_url is not None:
+            object.__setattr__(self, "url", self.booking_url)
+        if self.booking_url is None and self.url is not None:
+            object.__setattr__(self, "booking_url", self.url)
+        if self.display_name is None:
+            object.__setattr__(self, "display_name", self.label)
+        if self.type == BookingOptionType.trip_com and (
+            self.price_confidence == PriceConfidence.confirmed
+            or self.price_status == PriceStatus.confirmed
+        ):
             raise ValueError("Trip.com affiliate/deep-link prices cannot be marked confirmed.")
-        if self.price_confidence == PriceConfidence.confirmed and (
+        if self.price_status == PriceStatus.redirect_only and self.price_amount is not None:
+            raise ValueError("redirect-only booking options cannot include a confirmed price amount")
+        if self.price_confidence == PriceConfidence.confirmed and self.price_status != PriceStatus.confirmed:
+            raise ValueError("confirmed price_confidence requires price_status=confirmed")
+        if self.price_status == PriceStatus.confirmed and (
             self.price_amount is None or self.currency is None
         ):
             raise ValueError("confirmed booking options require price and currency")
@@ -377,6 +481,9 @@ class BookingOption(ApiModel):
 
 class PriceSourceCoverage(ApiModel):
     confirmed_supplier_count: int = Field(ge=0)
+    cached_supplier_count: int = Field(default=0, ge=0)
+    estimated_supplier_count: int = Field(default=0, ge=0)
+    redirect_only_supplier_count: int = Field(default=0, ge=0)
     check_required_supplier_count: int = Field(ge=0)
     unavailable_supplier_count: int = Field(ge=0)
     labels: list[str] = Field(default_factory=list)
@@ -466,6 +573,7 @@ class PriceSnapshot(ApiModel):
 class SupplierSearchOutcome(ApiModel):
     offers: list[NormalizedFlightOffer]
     failures: list[SupplierFailure]
+    supplier_results: list[SupplierResult] = Field(default_factory=list)
 
 
 class RiskAssessment(ApiModel):

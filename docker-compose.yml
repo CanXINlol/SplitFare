@@ -16,7 +16,15 @@ services:
   api:
     build: ./backend
     environment:
+      APP_ENV: local
+      APP_VERSION: 0.1.0
+      API_BASE_URL: http://localhost:8000
+      FRONTEND_ORIGIN: http://localhost:3000,http://127.0.0.1:3000,http://localhost:8080,http://127.0.0.1:8080
+      ENABLE_MOCK_SUPPLIER: "true"
+      LOG_LEVEL: INFO
+      RATE_LIMIT_REQUESTS_PER_MINUTE: "120"
       DATABASE_URL: postgresql+psycopg://splitfare:splitfare@db:5432/splitfare
+      REDIS_URL: ""
     ports:
       - "8000:8000"
     depends_on:
@@ -32,9 +40,13 @@ services:
     build:
       context: ./frontend
       args:
-        NEXT_PUBLIC_API_URL: http://localhost:8000
+        NEXT_PUBLIC_API_BASE_URL: http://localhost:8000
+        NEXT_PUBLIC_APP_ENV: local
+    environment:
+      NEXT_PUBLIC_API_BASE_URL: http://localhost:8000
+      NEXT_PUBLIC_APP_ENV: local
     ports:
-      - "3000:3000"
+      - "8080:3000"
     depends_on:
       api:
         condition: service_healthy

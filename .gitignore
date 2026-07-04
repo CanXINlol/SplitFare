@@ -8,3 +8,5 @@ pytest-cache-files-*/
 .venv/
 *.pyc
 coverage/
+test-results/
+playwright-report/

@@ -1,12 +1,11 @@
 import { expect, test, type Page } from "@playwright/test";
 
-async function searchByPlaces(page: Page, from: string, fromOption: string, to: string, toOption: string) {
-  await page.goto("/");
+async function choosePlace(page: Page, field: "From" | "To", value: string, option: string) {
+  await page.getByRole("textbox", { name: field }).fill(value);
+  await page.getByRole("button", { name: new RegExp(option) }).first().click();
+}
 
-  await page.getByRole("textbox", { name: "From" }).fill(from);
-  await page.getByRole("button", { name: new RegExp(fromOption) }).first().click();
-  await page.getByRole("textbox", { name: "To" }).fill(to);
-  await page.getByRole("button", { name: new RegExp(toOption) }).first().click();
+async function submitCurrentSearch(page: Page) {
   await page.getByLabel("Departure date").fill("2026-08-12");
   await page.getByLabel("Minimum gap").fill("3");
   await page.getByLabel("Maximum gap").fill("12");
@@ -16,7 +15,8 @@ async function searchByPlaces(page: Page, from: string, fromOption: string, to: 
 }
 
 test("mobile user can search Melbourne to Shanghai and understand result trade-offs", async ({ page }) => {
-  await searchByPlaces(page, "Melbourne", "Melbourne, Australia", "Shanghai", "Shanghai, China");
+  await page.goto("/");
+  await submitCurrentSearch(page);
 
   await expect(page.getByText("Best overall").first()).toBeVisible();
   await expect(page.getByText("Cheapest").first()).toBeVisible();
@@ -26,15 +26,19 @@ test("mobile user can search Melbourne to Shanghai and understand result trade-o
   await expect(page.getByText(/Save \$/).first()).toBeVisible();
   await expect(page.getByText(/risk/i).first()).toBeVisible();
   await expect(page.getByText("Booking options").first()).toBeVisible();
+  await expect(page.getByText(/Confirmed price/).first()).toBeVisible();
   await expect(page.getByText("Check on Trip.com").first()).toBeVisible();
-  await expect(page.getByText(/Price may change at checkout/).first()).toBeVisible();
+  await expect(page.getByText(/Price may change/).first()).toBeVisible();
   await page.getByText("Check on Trip.com").first().click();
   await expect(page.getByRole("dialog", { name: /pre-booking verification/i })).toBeVisible();
   await expect(page.getByText(/Review before leaving SplitFare|not available/i)).toBeVisible();
 });
 
 test("mobile user can search with Chinese city aliases", async ({ page }) => {
-  await searchByPlaces(page, "墨尔本", "Melbourne, Australia", "上海", "Shanghai, China");
+  await page.goto("/");
+  await choosePlace(page, "From", "\u58a8\u5c14\u672c", "Melbourne, Australia");
+  await choosePlace(page, "To", "\u4e0a\u6d77", "Shanghai, China");
+  await submitCurrentSearch(page);
 
   await expect(page.getByText("Best overall").first()).toBeVisible();
   await expect(page.getByText(/Melbourne \(MEL\)/).first()).toBeVisible();
@@ -42,7 +46,10 @@ test("mobile user can search with Chinese city aliases", async ({ page }) => {
 });
 
 test("mobile user can submit direct airport inputs and see empty state", async ({ page }) => {
-  await searchByPlaces(page, "PVG", "Shanghai Pudong Airport", "MEL", "Melbourne Airport");
+  await page.goto("/");
+  await choosePlace(page, "From", "PVG", "Shanghai Pudong Airport");
+  await choosePlace(page, "To", "MEL", "Melbourne Airport");
+  await submitCurrentSearch(page);
 
   await expect(page.getByText("No matching mock fares")).toBeVisible();
   await expect(page.getByText("No itinerary matched this search.")).toBeVisible();

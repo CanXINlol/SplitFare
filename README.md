@@ -330,7 +330,7 @@ npm run build
 npm run test:e2e
 ```
 
-`npm run test:e2e` starts the frontend on `127.0.0.1:3010` and backend on `127.0.0.1:8010`.
+`npm run test:e2e` starts the frontend on `127.0.0.1:8081` and backend on `127.0.0.1:8010`.
 
 ## API summary
 
@@ -359,6 +359,20 @@ Example search:
 ```
 
 Legacy `origin` / `destination` IATA fields are still accepted by the backend and converted to `airport:{IATA}` internally, but the frontend submits place IDs.
+
+## Phase 14 supplier contract and price status
+
+All supplier integrations must stay behind the backend `SupplierAdapter` contract. Adapters expose explicit capability flags, return normalized `NormalizedFlightOffer` objects through a `SupplierResult` wrapper, and report failures as sanitized `SupplierError` records. A single supplier timeout or failure should produce partial results or a developer-readable error, not a 500 for the whole search.
+
+`priceStatus` has these meanings:
+
+- `confirmed`: the supplier adapter has a current, verified price with currency, timestamp, and expiry.
+- `cached`: a previously checked price is being shown from cache/freshness metadata; it must be verified before booking.
+- `estimated`: an indicative price only, not a confirmed checkout price.
+- `redirect_only`: SplitFare has no confirmed price from this provider; the user can only click through to check externally.
+- `unavailable`: no usable price is available.
+
+Booking options include `supplier`, `displayName`, nullable `priceAmount`/`currency`, `priceStatus`, `bookingUrl`, `lastCheckedAt`, `expiresAt`, `verificationRequired`, and `warnings`. Trip.com and Skyscanner placeholder/deep-link options are `redirect_only`; they are displayed as “Check on Trip.com” or provider check options and are not treated as confirmed cheapest prices. Unsupported `verify_price` calls return `unsupported` instead of throwing.
 
 ## Current mock limitations
 

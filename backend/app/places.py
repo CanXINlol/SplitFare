@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import date, timedelta
 from unicodedata import normalize
 
 from app.data.mock_flights import MOCK_FLIGHTS
@@ -19,6 +20,7 @@ from app.models import (
 MAX_ORIGIN_AIRPORTS = 3
 MAX_DESTINATION_AIRPORTS = 3
 MAX_MATRIX_HUBS = 12
+MAX_ROUTE_QUERIES = 120
 
 
 @dataclass(frozen=True)
@@ -170,6 +172,71 @@ def _key(value: str) -> str:
     return normalize("NFKC", value).casefold().strip()
 
 
+def build_search_queries(
+    origin: ResolvedPlace,
+    destination: ResolvedPlace,
+    candidate_hubs: list[CandidateAirport],
+    departure_date: date,
+    max_route_queries: int,
+    second_leg_day_offsets: tuple[int, ...] = (0, 1),
+) -> tuple[list[FlightQuery], list[FlightQuery], list[CandidateAirport], list[str]]:
+    """Build a deterministic, capped airport query plan without I/O or supplier state."""
+    baseline_pairs = [
+        FlightQuery(
+            origin=origin_airport.iata_code,
+            destination=destination_airport.iata_code,
+            departure_date=departure_date,
+            kind="baseline",
+        )
+        for origin_airport in origin.airports
+        for destination_airport in destination.airports
+    ]
+    if len(baseline_pairs) > max_route_queries:
+        raise ValueError("Airport matrix baseline exceeds the configured route-query limit.")
+    queries: dict[tuple[str, str, date, str, str | None], FlightQuery] = {
+        (query.origin, query.destination, query.departure_date, query.kind, query.hub): query
+        for query in baseline_pairs
+    }
+    included_hubs: list[CandidateAirport] = []
+    excluded_hubs: list[str] = []
+    for hub in candidate_hubs:
+        hub_queries = [
+            FlightQuery(
+                origin=origin_airport.iata_code,
+                destination=hub.iata_code,
+                departure_date=departure_date,
+                kind="outbound_to_hub",
+                hub=hub.iata_code,
+            )
+            for origin_airport in origin.airports
+        ] + [
+            FlightQuery(
+                origin=hub.iata_code,
+                destination=destination_airport.iata_code,
+                departure_date=departure_date + timedelta(days=day_offset),
+                kind=(
+                    "hub_to_destination"
+                    if day_offset == 0
+                    else f"hub_to_destination_day_{day_offset + 1}"
+                ),
+                hub=hub.iata_code,
+            )
+            for destination_airport in destination.airports
+            for day_offset in second_leg_day_offsets
+        ]
+        new_queries = [
+            query for query in hub_queries
+            if (query.origin, query.destination, query.departure_date, query.kind, query.hub) not in queries
+        ]
+        if len(queries) + len(new_queries) > max_route_queries:
+            excluded_hubs.append(hub.iata_code)
+            continue
+        included_hubs.append(hub)
+        for query in new_queries:
+            queries[(query.origin, query.destination, query.departure_date, query.kind, query.hub)] = query
+    return baseline_pairs, list(queries.values()), included_hubs, excluded_hubs
+
+
 class PlaceService:
     def __init__(self) -> None:
         self.mock_airports = {
@@ -197,7 +264,9 @@ class PlaceService:
     def _build_places(self) -> dict[str, Place]:
         places: dict[str, Place] = {}
         for seed in CITY_SEEDS:
-            aliases = tuple(dict.fromkeys((*seed.aliases, *CITY_ALIAS_OVERRIDES.get(seed.place_id, ()))))
+            # CITY_ALIAS_OVERRIDES is the canonical Unicode alias source. Some historical
+            # seed literals were written through a legacy Windows code page and are not exposed.
+            aliases = tuple(dict.fromkeys((seed.name, *CITY_ALIAS_OVERRIDES.get(seed.place_id, ()))))
             places[seed.place_id] = Place(
                 id=seed.place_id,
                 type=PlaceType.city,
@@ -299,58 +368,42 @@ class PlaceService:
             ),
         )
 
-    def build_matrix(self, request: SearchRequest, candidate_hubs: tuple[str, ...]) -> AirportSearchMatrix:
+    def build_matrix(
+        self,
+        request: SearchRequest,
+        candidate_hubs: tuple[str, ...],
+        max_route_queries: int = MAX_ROUTE_QUERIES,
+    ) -> AirportSearchMatrix:
         origin = self.resolve(request.origin_place_id, MAX_ORIGIN_AIRPORTS)
         destination = self.resolve(request.destination_place_id, MAX_DESTINATION_AIRPORTS)
         origin_codes = {airport.iata_code for airport in origin.airports}
         destination_codes = {airport.iata_code for airport in destination.airports}
         if origin_codes & destination_codes:
             raise ValueError("Origin and destination resolve to the same airport. Choose different places.")
-        hubs = [
+        candidate_hub_airports = [
             self.airports[code]
             for code in candidate_hubs
             if code in self.airports and code not in origin_codes and code not in destination_codes
         ][:MAX_MATRIX_HUBS]
-        baseline_pairs = [
-            FlightQuery(
-                origin=origin_airport.iata_code,
-                destination=destination_airport.iata_code,
-                departure_date=request.departure_date,
-                kind="baseline",
-            )
-            for origin_airport in origin.airports
-            for destination_airport in destination.airports
-        ]
-        queries: dict[tuple[str, str, str, str | None], FlightQuery] = {
-            (query.origin, query.destination, query.kind, query.hub): query for query in baseline_pairs
-        }
-        for origin_airport in origin.airports:
-            for destination_airport in destination.airports:
-                for hub in hubs:
-                    outbound = FlightQuery(
-                        origin=origin_airport.iata_code,
-                        destination=hub.iata_code,
-                        departure_date=request.departure_date,
-                        kind="outbound_to_hub",
-                        hub=hub.iata_code,
-                    )
-                    inbound = FlightQuery(
-                        origin=hub.iata_code,
-                        destination=destination_airport.iata_code,
-                        departure_date=request.departure_date,
-                        kind="hub_to_destination",
-                        hub=hub.iata_code,
-                    )
-                    queries.setdefault((outbound.origin, outbound.destination, outbound.kind, outbound.hub), outbound)
-                    queries.setdefault((inbound.origin, inbound.destination, inbound.kind, inbound.hub), inbound)
+        baseline_pairs, query_plan, hubs, excluded_hubs = build_search_queries(
+            origin,
+            destination,
+            candidate_hub_airports,
+            request.departure_date,
+            max_route_queries,
+            (0, 1, 2) if request.max_gap_hours > 24 else (0, 1),
+        )
         return AirportSearchMatrix(
             origin=origin,
             destination=destination,
             origin_airports=origin.airports,
             destination_airports=destination.airports,
             hubs=hubs,
+            excluded_hubs=excluded_hubs,
             baseline_pairs=baseline_pairs,
-            query_plan=list(queries.values()),
+            query_plan=query_plan,
+            query_plan_truncated=bool(excluded_hubs),
+            max_route_queries=max_route_queries,
         )
 
     def _normalize_place_id(self, place_id: str) -> str:

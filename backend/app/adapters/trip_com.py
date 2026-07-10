@@ -14,7 +14,8 @@ from app.models import (
 )
 
 
-TRIP_COM_TRACKING_ID = "SPLITFARE_PLACEHOLDER"
+TRIP_COM_TRACKING_ID = "splitfare_demo"
+TRIP_COM_BASE_URL = "https://www.trip.com/flights/"
 
 
 class TripComAffiliateAdapter(SupplierAdapter):
@@ -48,7 +49,7 @@ class TripComAffiliateAdapter(SupplierAdapter):
             "cabin": cabin.value, "currency": currency,
             "tracking_id": TRIP_COM_TRACKING_ID,
         })
-        return f"https://example.invalid/tripcom-affiliate?{query}"
+        return f"{TRIP_COM_BASE_URL}?{query}"
 
     def _fetch_one_way(
         self, origin: str, destination: str, departure_date: date,

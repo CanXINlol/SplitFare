@@ -30,8 +30,8 @@ def session_factory() -> sessionmaker[Session]:
 
 def request() -> SearchRequest:
     return SearchRequest(
-        origin="MEL",
-        destination="PVG",
+        originPlaceId="airport:MEL",
+        destinationPlaceId="airport:PVG",
         departureDate=date(2026, 8, 12),
         minGapHours=3,
         maxGapHours=12,
@@ -65,7 +65,7 @@ def test_repository_persists_search_price_snapshots_itineraries_and_segments() -
         assert all(snapshot.expires_at for snapshot in snapshots)
 
         itineraries = session.scalars(select(ItineraryRecord)).all()
-        assert len(itineraries) >= len(response.ranked_results)
+        assert len(itineraries) >= len(response.results.ranked_results)
         for itinerary in itineraries:
             segments = session.scalars(
                 select(ItinerarySegmentRecord)

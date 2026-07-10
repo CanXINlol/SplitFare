@@ -1,5 +1,6 @@
 from datetime import date, datetime, time, timedelta, timezone
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from app.adapters.base import SupplierAdapter
 from app.cache import CacheCategory, CachePolicy, MOCK_FLIGHT_PRICE_TTL_SECONDS
@@ -18,10 +19,13 @@ from app.models import (
 
 
 class MockSupplierAdapter(SupplierAdapter):
-    def __init__(self, supplier: Supplier = Supplier.mock_sky):
+    def __init__(self, supplier: Supplier = Supplier.mock_sky, scenario: str = "success"):
         if supplier not in {Supplier.mock_sky, Supplier.demo_air, Supplier.budget_demo}:
             raise ValueError("MockSupplierAdapter requires a mock supplier name.")
         self._name = supplier
+        if scenario not in {"success", "timeout", "partial"}:
+            raise ValueError("Unknown mock supplier scenario.")
+        self.scenario = scenario
 
     @property
     def name(self) -> Supplier:
@@ -35,7 +39,7 @@ class MockSupplierAdapter(SupplierAdapter):
             supports_booking_url=False,
             supports_baggage_info=True,
             supports_split_ticket=True,
-            supports_live_price=True,
+            supports_live_price=False,
         )
 
     @property
@@ -51,6 +55,16 @@ class MockSupplierAdapter(SupplierAdapter):
         cabin: Cabin,
         currency: str,
     ) -> Any:
+        if self.scenario == "timeout":
+            raise TimeoutError("Deterministic mock supplier timeout.")
+        flights = [
+            flight for flight in MOCK_FLIGHTS
+            if flight.supplier == self.name
+            and flight.origin == origin
+            and flight.destination == destination
+        ]
+        if self.scenario == "partial":
+            flights = flights[:1]
         return {
             "origin": origin,
             "destination": destination,
@@ -58,12 +72,7 @@ class MockSupplierAdapter(SupplierAdapter):
             "passengers": passengers,
             "cabin": cabin.value,
             "currency": currency,
-            "flights": [
-                flight for flight in MOCK_FLIGHTS
-                if flight.supplier == self.name
-                and flight.origin == origin
-                and flight.destination == destination
-            ],
+            "flights": flights,
         }
 
     def normalize(self, raw_response: Any) -> list[NormalizedFlightOffer]:
@@ -73,16 +82,18 @@ class MockSupplierAdapter(SupplierAdapter):
         passengers = int(raw_response["passengers"])
         cabin = Cabin(str(raw_response["cabin"]))
         currency = str(raw_response["currency"])
-        checked_at = datetime.combine(departure_date, time(0), tzinfo=timezone.utc)
+        checked_at = datetime.now(timezone.utc)
         expires_at = checked_at + timedelta(seconds=MOCK_FLIGHT_PRICE_TTL_SECONDS)
         offers: list[NormalizedFlightOffer] = []
         for flight in raw_response["flights"]:
             departure = datetime.combine(
                 departure_date,
                 time(flight.departure_hour, flight.departure_minute),
-                tzinfo=timezone.utc,
+                tzinfo=ZoneInfo(AIRPORT_TIME_ZONES.get(flight.origin, "UTC")),
             )
-            arrival = departure + timedelta(minutes=flight.duration_minutes)
+            arrival = (departure.astimezone(timezone.utc) + timedelta(minutes=flight.duration_minutes)).astimezone(
+                ZoneInfo(AIRPORT_TIME_ZONES.get(flight.destination, "UTC"))
+            )
             segment = Segment(
                     id=flight.id,
                     origin=flight.origin,
@@ -95,7 +106,10 @@ class MockSupplierAdapter(SupplierAdapter):
             )
             offers.append(
                 NormalizedFlightOffer(
-                    id=f"offer-{flight.id}",
+                    id=(
+                        f"offer-{flight.id}-{departure_date.isoformat()}-{passengers}p-"
+                        f"{cabin.value}-{currency}"
+                    ),
                     supplier=flight.supplier,
                     origin=flight.origin,
                     destination=flight.destination,
@@ -124,23 +138,64 @@ class MockSupplierAdapter(SupplierAdapter):
         return offers
 
     def verify_price_result(self, offer_id: str) -> VerifyPriceResult:
-        fixture_id = offer_id.removeprefix("offer-")
+        fixture_id, passengers, currency = parse_mock_offer_id(offer_id)
         flight = next(
             (item for item in MOCK_FLIGHTS if item.id == fixture_id and item.supplier == self.name),
             None,
         )
         checked_at = datetime.now(timezone.utc)
+        available = flight is not None and flight.verification_available
         return VerifyPriceResult(
             offer_id=offer_id,
             supplier=self.name,
-            status=VerificationStatus.verified if flight else VerificationStatus.unavailable,
-            price_status=PriceStatus.confirmed if flight else PriceStatus.unavailable,
-            price_amount=flight.price if flight else None,
-            currency="AUD" if flight else None,
+            status=VerificationStatus.verified if available else VerificationStatus.unavailable,
+            price_status=PriceStatus.confirmed if available else PriceStatus.unavailable,
+            price_amount=(flight.price + flight.verification_price_delta) * passengers if available else None,
+            currency=currency if available else None,
             checked_at=checked_at,
-            expires_at=checked_at + timedelta(seconds=MOCK_FLIGHT_PRICE_TTL_SECONDS) if flight else None,
-            message="Verified against deterministic mock data." if flight else "Mock offer not found.",
+            expires_at=checked_at + timedelta(seconds=MOCK_FLIGHT_PRICE_TTL_SECONDS) if available else None,
+            message=(
+                "Verified against deterministic mock data."
+                if available
+                else "This deterministic mock offer is unavailable."
+                if flight
+                else "Mock offer not found."
+            ),
         )
+
+
+AIRPORT_TIME_ZONES = {
+    "MEL": "Australia/Melbourne",
+    "PVG": "Asia/Shanghai",
+    "SHA": "Asia/Shanghai",
+    "BKK": "Asia/Bangkok",
+    "SIN": "Asia/Singapore",
+    "KUL": "Asia/Kuala_Lumpur",
+    "HKG": "Asia/Hong_Kong",
+    "TPE": "Asia/Taipei",
+    "ICN": "Asia/Seoul",
+    "NRT": "Asia/Tokyo",
+    "CAN": "Asia/Shanghai",
+}
+
+
+def parse_mock_offer_id(offer_id: str) -> tuple[str, int, str]:
+    value = offer_id.removeprefix("offer-")
+    try:
+        fixture_and_date, passenger_token, _cabin, currency = value.rsplit("-", 3)
+        if not passenger_token.endswith("p"):
+            raise ValueError
+        fixture_id = fixture_and_date
+        if len(fixture_and_date) > 11 and fixture_and_date[-11] == "-":
+            try:
+                date.fromisoformat(fixture_and_date[-10:])
+                fixture_id = fixture_and_date[:-11]
+            except ValueError:
+                pass
+        return fixture_id, int(passenger_token[:-1]), currency
+    except (ValueError, TypeError):
+        # Compatibility for direct contract checks created before the normalized ID format.
+        return value, 1, "AUD"
 
 
 class MockFlightSupplier:

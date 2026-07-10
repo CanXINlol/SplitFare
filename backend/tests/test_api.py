@@ -57,6 +57,12 @@ def test_invalid_place_returns_user_friendly_404() -> None:
     assert "Choose a city or airport" in response.json()["error"]["message"]
 
 
+def test_place_search_rejects_oversized_queries() -> None:
+    response = client.get("/api/places/search", params={"q": "x" * 81})
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "validation_error"
+
+
 def test_rate_limit_applies_to_search_endpoint(monkeypatch) -> None:
     monkeypatch.setattr(
         main_module,
@@ -96,7 +102,7 @@ def test_search_api_uses_camel_case_contract() -> None:
     body = response.json()
     assert body["searchId"]
     assert body["status"] == "complete"
-    assert body["results"]["rankedResults"] == body["rankedResults"]
+    assert body["results"]["rankedResults"]
     assert body["errors"] == []
     assert body["baseline"]["totalPrice"] > 0
     assert body["cheapestSplit"]["type"] == "split_ticket"
@@ -115,17 +121,32 @@ def test_search_api_uses_camel_case_contract() -> None:
         option for option in body["cheapestSplit"]["bookingOptions"]
         if option["label"] == "Check on Trip.com"
     )
-    assert trip_option["priceConfidence"] == "check_required"
     assert trip_option["priceStatus"] == "redirect_only"
     assert trip_option["priceAmount"] is None
-    assert "tracking_id=SPLITFARE_PLACEHOLDER" in trip_option["url"]
+    assert "tracking_id=splitfare_demo" in trip_option["url"]
+    assert body["metadata"]["demoData"] is True
+    assert body["metadata"]["mode"] == "mock"
+    assert body["metadata"]["supplierQueryCount"] <= body["metadata"]["supplierQueryLimit"]
     assert body["cheapestSplit"]["priceSourceCoverage"]["checkRequiredSupplierCount"] >= 1
-    assert body["baselinePrice"] == body["baseline"]["totalPrice"]
-    assert body["protectedItineraries"]
-    assert body["splitTicketItineraries"]
-    assert len(body["rankedResults"]) <= 20
-    assert body["rankedResults"] == body["ranked"]
+    assert body["results"]["baselinePrice"] == body["baseline"]["totalPrice"]
+    assert body["results"]["protectedItineraries"]
+    assert body["results"]["splitTicketItineraries"]
+    assert len(body["results"]["rankedResults"]) <= 20
+    assert "rankedResults" not in body
     assert body["supplierFailures"] == []
+
+
+def test_openapi_contract_uses_location_search_and_canonical_verification_fields() -> None:
+    schemas = client.get("/openapi.json").json()["components"]["schemas"]
+    search_properties = schemas["SearchRequest"]["properties"]
+    assert "originPlaceId" in search_properties
+    assert "destinationPlaceId" in search_properties
+    assert "origin" not in search_properties
+    assert "destination" not in search_properties
+    response_required = set(schemas["SearchResponse"]["required"])
+    assert {"searchId", "status", "results", "metadata", "disclaimer"} <= response_required
+    verification_properties = set(schemas["PreBookingVerificationRequest"]["properties"])
+    assert verification_properties == {"searchId", "itineraryId", "bookingOptionId"}
 
 
 def test_raw_payload_requires_explicit_debug_flag() -> None:
@@ -135,8 +156,19 @@ def test_raw_payload_requires_explicit_debug_flag() -> None:
     }
     regular = client.post("/api/search", json=payload).json()
     debug = client.post("/api/search?debug=true", json=payload).json()
-    assert "rawPayload" not in regular["rankedResults"][0]["offers"][0]
-    assert debug["rankedResults"][0]["offers"][0]["rawPayload"]["fixture"]
+    assert "rawPayload" not in regular["results"]["rankedResults"][0]["offers"][0]
+    assert debug["results"]["rankedResults"][0]["offers"][0]["rawPayload"]["fixture"]
+
+
+def test_production_never_exposes_raw_payload_even_with_debug_flag(monkeypatch) -> None:
+    monkeypatch.setattr(main_module, "settings", replace(main_module.settings, app_env="production"))
+    response = client.post("/api/search?debug=true", json={
+        "originPlaceId": "airport:MEL", "destinationPlaceId": "airport:PVG",
+        "departureDate": "2026-08-12", "minGapHours": 3, "maxGapHours": 12,
+        "passengers": 1, "cabin": "economy", "candidateHubs": [],
+    })
+    assert response.status_code == 200
+    assert "rawPayload" not in str(response.json())
 
 
 def test_no_results_returns_200_with_empty_arrays_and_explanation() -> None:
@@ -175,36 +207,55 @@ def test_duffel_verify_endpoint_exists_in_mock_mode() -> None:
 
 def test_live_duffel_adapter_is_only_enabled_when_token_exists() -> None:
     mock_mode = build_supplier_adapters(Settings(duffel_api_token=None))
-    live_mode = build_supplier_adapters(Settings(duffel_api_token="duffel_test_token"))
-    assert "Duffel" not in {adapter.name.value for adapter in mock_mode}
-    assert "Duffel" in {adapter.name.value for adapter in live_mode}
+    live_mode = build_supplier_adapters(Settings(
+        enable_mock_supplier=False, duffel_api_token="duffel_test_token"
+    ))
+    mock_duffel = next(adapter for adapter in mock_mode if adapter.name.value == "Duffel")
+    live_duffel = next(adapter for adapter in live_mode if adapter.name.value == "Duffel")
+    assert mock_duffel.capabilities.supports_search is False
+    assert live_duffel.capabilities.supports_search is True
 
 
-def test_pre_booking_verification_shows_price_change_and_records_events() -> None:
+def _booking_option(search_response, offer_fragment: str):
+    itineraries = (
+        search_response["results"]["protectedItineraries"]
+        + search_response["results"]["splitTicketItineraries"]
+    )
+    for itinerary in itineraries:
+        for option in itinerary["bookingOptions"]:
+            if offer_fragment in (option.get("offerId") or ""):
+                return itinerary, option
+    raise AssertionError(f"No booking option contains {offer_fragment}")
+
+
+def _search_response():
+    return client.post("/api/search", json={
+        "originPlaceId": "city:melbourne-au", "destinationPlaceId": "city:shanghai-cn",
+        "departureDate": "2026-08-12", "minGapHours": 3, "maxGapHours": 12,
+        "passengers": 1, "cabin": "economy",
+    }).json()
+
+
+def test_pre_booking_verification_uses_canonical_option_and_records_events() -> None:
     search_body = {
         "originPlaceId": "city:melbourne-au", "destinationPlaceId": "city:shanghai-cn", "departureDate": "2026-08-12",
         "minGapHours": 3, "maxGapHours": 12, "passengers": 1, "cabin": "economy",
     }
     search_response = client.post("/api/search", json=search_body).json()
     search_id = search_response["searchId"]
+    itinerary, option = _booking_option(search_response, "direct-mu")
     response = client.post("/api/booking-options/verify", json={
         "searchId": search_id,
-        "itineraryId": "manual-test",
-        "offerId": "offer-direct-mu",
-        "supplier": "MockSky",
-        "bookingOptionType": "supplier",
-        "bookingOptionLabel": "Check on supplier",
-        "previousPrice": 1000,
-        "currency": "AUD",
-        "bookingUrl": "https://example.invalid/book",
+        "itineraryId": itinerary["id"],
+        "bookingOptionId": option["id"],
     })
     assert response.status_code == 200
     body = response.json()
     assert body["stillAvailable"] is True
     assert body["currentPrice"] == 1120
-    assert body["previousPrice"] == 1000
-    assert body["priceChanged"] is True
-    assert body["bookingUrl"] == "https://example.invalid/book"
+    assert body["previousPrice"] == 1120
+    assert body["priceChanged"] is False
+    assert body["bookingUrl"] is None
     session = SessionLocal()
     try:
         events = session.scalars(
@@ -216,16 +267,27 @@ def test_pre_booking_verification_shows_price_change_and_records_events() -> Non
         session.close()
 
 
-def test_pre_booking_unavailable_disables_continue() -> None:
+def test_pre_booking_price_changed_uses_supplier_result() -> None:
+    search_response = _search_response()
+    itinerary, option = _booking_option(search_response, "direct-sha")
     response = client.post("/api/booking-options/verify", json={
-        "itineraryId": "manual-test",
-        "offerId": "missing-offer",
-        "supplier": "MockSky",
-        "bookingOptionType": "supplier",
-        "bookingOptionLabel": "Check on supplier",
-        "previousPrice": 1000,
-        "currency": "AUD",
-        "bookingUrl": "https://example.invalid/book",
+        "searchId": search_response["searchId"],
+        "itineraryId": itinerary["id"],
+        "bookingOptionId": option["id"],
+    })
+    assert response.status_code == 200
+    body = response.json()
+    assert body["priceChanged"] is True
+    assert body["currentPrice"] == body["previousPrice"] + 45
+
+
+def test_pre_booking_unavailable_disables_continue() -> None:
+    search_response = _search_response()
+    itinerary, option = _booking_option(search_response, "direct-qf")
+    response = client.post("/api/booking-options/verify", json={
+        "searchId": search_response["searchId"],
+        "itineraryId": itinerary["id"],
+        "bookingOptionId": option["id"],
     })
     assert response.status_code == 200
     body = response.json()
@@ -236,14 +298,13 @@ def test_pre_booking_unavailable_disables_continue() -> None:
 
 
 def test_trip_com_pre_booking_requires_provider_price_check() -> None:
+    search_response = _search_response()
+    itinerary = search_response["results"]["rankedResults"][0]
+    option = next(item for item in itinerary["bookingOptions"] if item["type"] == "trip_com")
     response = client.post("/api/booking-options/verify", json={
-        "itineraryId": "manual-test",
-        "supplier": "TripComAffiliate",
-        "bookingOptionType": "trip_com",
-        "bookingOptionLabel": "Check on Trip.com",
-        "currency": "AUD",
-        "bookingUrl": "https://example.invalid/tripcom-affiliate?tracking_id=SPLITFARE_PLACEHOLDER",
-        "trackingId": "SPLITFARE_PLACEHOLDER",
+        "searchId": search_response["searchId"],
+        "itineraryId": itinerary["id"],
+        "bookingOptionId": option["id"],
     })
     assert response.status_code == 200
     body = response.json()
@@ -252,3 +313,23 @@ def test_trip_com_pre_booking_requires_provider_price_check() -> None:
     assert body["requiresPriceCheck"] is True
     assert body["currentPrice"] is None
     assert body["priceChanged"] is False
+    assert body["status"] == "unsupported"
+
+
+def test_pre_booking_rejects_client_supplied_redirect_url() -> None:
+    response = client.post("/api/booking-options/verify", json={
+        "searchId": "unknown", "itineraryId": "unknown", "bookingOptionId": "unknown",
+        "bookingUrl": "javascript:alert(1)",
+    })
+    assert response.status_code == 422
+
+
+def test_pre_booking_rejects_option_bound_to_another_itinerary() -> None:
+    search_response = _search_response()
+    itinerary, option = _booking_option(search_response, "direct-mu")
+    response = client.post("/api/booking-options/verify", json={
+        "searchId": search_response["searchId"],
+        "itineraryId": f"{itinerary['id']}-tampered",
+        "bookingOptionId": option["id"],
+    })
+    assert response.status_code == 404

@@ -51,8 +51,8 @@ def _now() -> datetime:
 
 
 def _stored_route_code(place_id: str, response: SearchResponse, side: str) -> str:
-    if response.ranked_results:
-        segment = response.ranked_results[0].segments[0 if side == "origin" else -1]
+    if response.results.ranked_results:
+        segment = response.results.ranked_results[0].segments[0 if side == "origin" else -1]
         return segment.origin if side == "origin" else segment.destination
     if place_id.lower().startswith("airport:"):
         return place_id.split(":", 1)[1].upper()
@@ -143,7 +143,10 @@ class SearchRepository:
         for offer in offers:
             self.session.merge(self._price_snapshot_record(request, response.search_id, offer))
 
-        ranked_ids = {itinerary.id: index + 1 for index, itinerary in enumerate(response.ranked_results)}
+        ranked_ids = {
+            itinerary.id: index + 1
+            for index, itinerary in enumerate(response.results.ranked_results)
+        }
         for itinerary in self._unique_itineraries(response):
             db_itinerary_id = self._db_itinerary_id(response.search_id, itinerary.id)
             self.session.merge(
@@ -174,9 +177,9 @@ class SearchRepository:
             event_type="search.completed",
             payload={
                 "status": response.status.value,
-                "ranked_count": len(response.ranked_results),
-                "protected_count": len(response.protected_itineraries),
-                "split_ticket_count": len(response.split_ticket_itineraries),
+                "ranked_count": len(response.results.ranked_results),
+                "protected_count": len(response.results.protected_itineraries),
+                "split_ticket_count": len(response.results.split_ticket_itineraries),
             },
         ))
         self.session.commit()
@@ -265,9 +268,9 @@ class SearchRepository:
     def _unique_itineraries(self, response: SearchResponse) -> list[Itinerary]:
         unique: dict[str, Itinerary] = {}
         for itinerary in (
-            response.protected_itineraries
-            + response.split_ticket_itineraries
-            + response.ranked_results
+            response.results.protected_itineraries
+            + response.results.split_ticket_itineraries
+            + response.results.ranked_results
         ):
             unique.setdefault(itinerary.id, itinerary)
         return list(unique.values())

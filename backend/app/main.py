@@ -1,10 +1,12 @@
 import logging
 import time
+from dataclasses import replace
 from datetime import datetime, timezone
+from decimal import Decimal
 from typing import Any
 from uuid import uuid4
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -14,11 +16,11 @@ from app.adapters.duffel import DuffelSupplierAdapter
 from app.adapters.mock_supplier import MockSupplierAdapter
 from app.adapters.orchestrator import SupplierOrchestrator
 from app.adapters.trip_com import TripComAffiliateAdapter
+from app.adapters.skyscanner import SkyscannerSupplierAdapter
 from app.cache import RedisCache
 from app.config import Settings, load_settings
 from app.db import SessionLocal, init_database
 from app.models import (
-    BookingOptionType,
     PlaceSearchResponse,
     PreBookingVerificationRequest,
     PreBookingVerificationResponse,
@@ -56,29 +58,45 @@ app.add_middleware(
     allow_methods=["GET", "POST"],
     allow_headers=["Content-Type"],
 )
-init_database()
+try:
+    init_database()
+    database_available = True
+except Exception as exception:
+    database_available = False
+    logger.error("database.initialization_failed reason=%s", type(exception).__name__)
 cache = RedisCache.from_env()
 
 _rate_limit_hits: dict[str, list[float]] = {}
 
 
 def build_supplier_adapters(settings: Settings):
-    adapters = [TripComAffiliateAdapter()]
+    duffel_settings = replace(settings, duffel_api_token=None) if settings.enable_mock_supplier else settings
+    adapters = [
+        TripComAffiliateAdapter(),
+        SkyscannerSupplierAdapter(),
+        DuffelSupplierAdapter(duffel_settings),
+    ]
     if settings.enable_mock_supplier:
         adapters.extend([
             MockSupplierAdapter(Supplier.mock_sky),
             MockSupplierAdapter(Supplier.demo_air),
             MockSupplierAdapter(Supplier.budget_demo),
         ])
-    if settings.duffel_enabled:
-        adapters.append(DuffelSupplierAdapter(settings))
     return adapters
 
 
-supplier_orchestrator = SupplierOrchestrator(build_supplier_adapters(settings), cache=cache)
+supplier_orchestrator = SupplierOrchestrator(
+    build_supplier_adapters(settings),
+    cache=cache,
+    max_concurrent_requests=settings.max_concurrent_supplier_requests,
+)
 service = SearchService(
-    SearchOrchestrator(supplier_orchestrator, cache=cache),
-    persistence_service=SearchPersistenceService(SessionLocal),
+    SearchOrchestrator(
+        supplier_orchestrator,
+        cache=cache,
+        max_supplier_queries_per_search=settings.max_supplier_queries_per_search,
+    ),
+    persistence_service=SearchPersistenceService(SessionLocal) if database_available else None,
 )
 
 
@@ -190,7 +208,7 @@ def health() -> dict[str, str]:
 
 
 @app.get("/api/places/search", response_model=PlaceSearchResponse)
-def search_places(q: str) -> PlaceSearchResponse:
+def search_places(q: str = Query(min_length=1, max_length=80)) -> PlaceSearchResponse:
     return PlaceSearchResponse(results=place_service.search(q))
 
 
@@ -218,8 +236,6 @@ def verify_price(supplier: Supplier, offer_id: str) -> VerifyPriceResult:
     try:
         return supplier_orchestrator.verify_price(supplier, offer_id)
     except ValueError as error:
-        if supplier == Supplier.duffel:
-            return DuffelSupplierAdapter(settings).verify_price(offer_id)
         raise HTTPException(status_code=404, detail=str(error)) from error
 
 
@@ -228,23 +244,12 @@ def _record_booking_event(
 ) -> None:
     if not search_id:
         return
+    if service.persistence_service is None:
+        return
     try:
-        service.persistence_service.record_event(search_id, event_type, payload)  # type: ignore[union-attr]
+        service.persistence_service.record_event(search_id, event_type, payload)
     except Exception:
         return
-
-
-def _verify_supplier_price(
-    supplier: Supplier, offer_id: str | None
-) -> VerifyPriceResult | None:
-    if not offer_id:
-        return None
-    try:
-        return supplier_orchestrator.verify_price(supplier, offer_id)
-    except ValueError:
-        if supplier == Supplier.duffel:
-            return DuffelSupplierAdapter(settings).verify_price(offer_id)
-        return None
 
 
 @app.post("/api/booking-options/verify", response_model=PreBookingVerificationResponse)
@@ -253,32 +258,38 @@ def verify_booking_option(
 ) -> PreBookingVerificationResponse:
     click_payload = request.model_dump(mode="json")
     _record_booking_event(request.search_id, "booking.clicked", click_payload)
-
-    if request.booking_option_type == BookingOptionType.trip_com:
+    option = service.get_booking_option(
+        request.search_id, request.itinerary_id, request.booking_option_id
+    )
+    if option is None:
+        raise HTTPException(
+            status_code=404,
+            detail="This booking option is unknown or no longer belongs to the selected itinerary.",
+        )
+    canonical_url = option.booking_url
+    previous_price = option.price_amount
+    currency = option.currency
+    if not option.capabilities.supports_price_verify:
         response = PreBookingVerificationResponse(
-            still_available=bool(request.booking_url),
+            still_available=canonical_url is not None,
             current_price=None,
-            previous_price=request.previous_price,
-            currency=request.currency,
+            previous_price=previous_price,
+            currency=currency,
             price_changed=False,
-            booking_url=request.booking_url,
+            booking_url=canonical_url,
             checked_at=datetime.now(timezone.utc),
-            status=VerificationStatus.unavailable,
-            message=(
-                "Trip.com affiliate/deep-link prices are not confirmed. "
-                "Continue only to check the current price on Trip.com."
-            ),
-            can_continue=bool(request.booking_url),
+            status=VerificationStatus.unsupported,
+            message="This provider does not support price verification in SplitFare. Check the final price on the provider.",
+            can_continue=canonical_url is not None,
             requires_price_check=True,
         )
     else:
-        verification = _verify_supplier_price(request.supplier, request.offer_id)
-        if verification is None:
+        if option.supplier is None or option.offer_id is None:
             response = PreBookingVerificationResponse(
                 still_available=False,
                 current_price=None,
-                previous_price=request.previous_price,
-                currency=request.currency,
+                previous_price=previous_price,
+                currency=currency,
                 price_changed=False,
                 booking_url=None,
                 checked_at=datetime.now(timezone.utc),
@@ -287,30 +298,41 @@ def verify_booking_option(
                 can_continue=False,
             )
         else:
+            try:
+                verification = supplier_orchestrator.verify_price(option.supplier, option.offer_id)
+            except TimeoutError:
+                verification = VerifyPriceResult(
+                    offer_id=option.offer_id,
+                    supplier=option.supplier,
+                    status=VerificationStatus.timeout,
+                    supported=True,
+                    checked_at=datetime.now(timezone.utc),
+                    message="Price verification timed out. Try again before continuing.",
+                )
             still_available = (
                 verification.status == VerificationStatus.verified
                 and verification.price_status == PriceStatus.confirmed
                 and verification.is_confirmed
             )
             current_price = verification.price_amount if still_available else None
-            currency = verification.currency or request.currency
+            currency = verification.currency or currency
             price_changed = (
                 current_price is not None
-                and request.previous_price is not None
-                and abs(current_price - request.previous_price) > 0.01
+                and previous_price is not None
+                and abs(current_price - previous_price) > Decimal("0.01")
             )
             response = PreBookingVerificationResponse(
                 still_available=still_available,
                 current_price=current_price,
-                previous_price=request.previous_price,
+                previous_price=previous_price,
                 currency=currency,
                 price_changed=price_changed,
-                booking_url=request.booking_url if still_available else None,
+                booking_url=canonical_url if still_available else None,
                 checked_at=verification.checked_at,
                 expires_at=verification.expires_at,
                 status=verification.status,
                 message=verification.message if still_available else verification.message,
-                can_continue=still_available and request.booking_url is not None,
+                can_continue=still_available and canonical_url is not None,
             )
 
     _record_booking_event(request.search_id, "booking.verification_completed", response.model_dump(mode="json"))

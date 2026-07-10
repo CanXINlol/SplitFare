@@ -10,5 +10,6 @@ export function duration(minutes: number | null): string {
 }
 
 export function clock(value: string): string {
-  return new Intl.DateTimeFormat("en-AU", { hour: "2-digit", minute: "2-digit", hour12: false, timeZone: "UTC" }).format(new Date(value));
+  const localClock = value.match(/T(\d{2}):(\d{2})/);
+  return localClock ? `${localClock[1]}:${localClock[2]}` : "Time unavailable";
 }

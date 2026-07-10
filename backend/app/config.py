@@ -58,6 +58,8 @@ class Settings:
     duffel_base_url: str = "https://api.duffel.com"
     duffel_api_version: str = "v2"
     external_api_timeout_seconds: float = 10.0
+    max_supplier_queries_per_search: int = 120
+    max_concurrent_supplier_requests: int = 8
 
     @property
     def duffel_enabled(self) -> bool:
@@ -66,6 +68,10 @@ class Settings:
     @property
     def app_mode(self) -> Literal["mock", "live"]:
         return "mock" if self.enable_mock_supplier else "live"
+
+    @property
+    def is_demo(self) -> bool:
+        return self.enable_mock_supplier
 
     @property
     def is_production(self) -> bool:
@@ -85,19 +91,25 @@ def load_settings() -> Settings:
         "http://localhost:8081",
         "http://127.0.0.1:8081",
     )
+    is_production = app_env.lower() in {"production", "prod"}
+    frontend_origins = _csv_env(
+        "FRONTEND_ORIGIN",
+        local_origins if not is_production else (),
+    )
+    if is_production and "*" in frontend_origins:
+        raise ValueError("FRONTEND_ORIGIN cannot contain '*' in production.")
     return Settings(
         app_env=app_env,
         app_version=os.getenv("APP_VERSION", "0.1.0").strip() or "0.1.0",
         api_base_url=os.getenv("API_BASE_URL", "http://localhost:8000").rstrip("/"),
-        frontend_origins=_csv_env(
-            "FRONTEND_ORIGIN",
-            local_origins if app_env.lower() not in {"production", "prod"} else (),
-        ),
-        enable_mock_supplier=_bool_env("ENABLE_MOCK_SUPPLIER", True),
+        frontend_origins=frontend_origins,
+        enable_mock_supplier=_bool_env("ENABLE_MOCK_SUPPLIER", not is_production),
         log_level=os.getenv("LOG_LEVEL", "INFO").upper(),
         rate_limit_requests_per_minute=_int_env("RATE_LIMIT_REQUESTS_PER_MINUTE", 120),
         duffel_api_token=token.strip() if token and token.strip() else None,
         duffel_base_url=os.getenv("DUFFEL_BASE_URL", "https://api.duffel.com").rstrip("/"),
         duffel_api_version=os.getenv("DUFFEL_API_VERSION", "v2"),
         external_api_timeout_seconds=_float_env("EXTERNAL_API_TIMEOUT_SECONDS", 10.0),
+        max_supplier_queries_per_search=_int_env("MAX_SUPPLIER_QUERIES_PER_SEARCH", 120),
+        max_concurrent_supplier_requests=_int_env("MAX_CONCURRENT_SUPPLIER_REQUESTS", 8),
     )

@@ -5,7 +5,7 @@ from datetime import date
 from app.adapters.mock_supplier import MockSupplierAdapter
 from app.adapters.orchestrator import SupplierOrchestrator
 from app.cache import RedisCache, flight_cache_key
-from app.models import Cabin, Supplier
+from app.models import Cabin, PriceStatus, Supplier
 
 
 class CountingMockAdapter(MockSupplierAdapter):
@@ -30,7 +30,7 @@ class DownRedis:
 
 
 def test_get_or_fetch_miss_then_hit(caplog) -> None:
-    caplog.set_level(logging.INFO, logger="splitfare.cache")
+    caplog.set_level(logging.DEBUG, logger="splitfare.cache")
     cache = RedisCache(enable_memory_fallback=True)
     calls = 0
 
@@ -74,7 +74,9 @@ def test_second_same_route_search_hits_supplier_cache() -> None:
     first = asyncio.run(orchestrator.search_route(*query))
     second = asyncio.run(orchestrator.search_route(*query))
 
-    assert first.offers == second.offers
+    assert [offer.id for offer in first.offers] == [offer.id for offer in second.offers]
+    assert all(offer.price_status == PriceStatus.confirmed for offer in first.offers)
+    assert all(offer.price_status == PriceStatus.cached for offer in second.offers)
     assert adapter.fetch_count == 1
 
 

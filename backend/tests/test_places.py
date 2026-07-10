@@ -171,6 +171,21 @@ def test_matrix_caps_hubs_to_twelve() -> None:
     assert len(matrix.hubs) == MAX_HUBS
 
 
+def test_matrix_caps_total_supplier_queries_and_reports_excluded_hubs() -> None:
+    orchestrator = SearchOrchestrator(
+        build_mock_orchestrator(), max_supplier_queries_per_search=120
+    )
+    outcome = asyncio.run(orchestrator.collect_offers(request()))
+    assert outcome.supplier_query_count <= outcome.supplier_query_limit
+    assert outcome.matrix.query_plan_truncated is True
+    assert outcome.matrix.excluded_hubs
+    keys = {
+        (query.origin, query.destination, query.departure_date, query.kind, query.hub)
+        for query in outcome.query_plan
+    }
+    assert len(keys) == len(outcome.query_plan)
+
+
 def test_airport_destination_only_searches_that_airport() -> None:
     matrix = place_service.build_matrix(request(destination="airport:PVG"), generate_candidate_hubs(request(destination="airport:PVG")))
     assert [airport.iata_code for airport in matrix.destination_airports] == ["PVG"]
@@ -192,10 +207,10 @@ def test_same_place_is_rejected_before_matrix_generation() -> None:
 def test_melbourne_shanghai_full_flow_returns_airport_specific_results() -> None:
     service = SearchService(SearchOrchestrator(build_mock_orchestrator()))
     response = asyncio.run(service.search(request()))
-    assert response.ranked
-    assert any(segment.origin == "MEL" for itinerary in response.ranked for segment in itinerary.segments)
-    assert any(segment.destination in {"PVG", "SHA"} for itinerary in response.ranked for segment in itinerary.segments)
-    assert response.ranked[0].segments[0].origin_display
+    assert response.results.ranked_results
+    assert any(segment.origin == "MEL" for itinerary in response.results.ranked_results for segment in itinerary.segments)
+    assert any(segment.destination in {"PVG", "SHA"} for itinerary in response.results.ranked_results for segment in itinerary.segments)
+    assert response.results.ranked_results[0].segments[0].origin_display
 
 
 def test_chinese_melbourne_shanghai_search_inputs_resolve_to_same_flow() -> None:
@@ -203,7 +218,7 @@ def test_chinese_melbourne_shanghai_search_inputs_resolve_to_same_flow() -> None
     destination = place_service.search("上海")[0].id
     service = SearchService(SearchOrchestrator(build_mock_orchestrator()))
     response = asyncio.run(service.search(request(origin, destination)))
-    assert response.ranked
+    assert response.results.ranked_results
     assert response.cheapest_split is not None
 
 
@@ -213,7 +228,7 @@ def test_gap_filtering_still_applies_after_location_resolution() -> None:
     search_request.max_gap_hours = 8
     service = SearchService(SearchOrchestrator(build_mock_orchestrator()))
     response = asyncio.run(service.search(search_request))
-    splits = [item for item in response.ranked if item.type == "split_ticket"]
+    splits = [item for item in response.results.ranked_results if item.type == "split_ticket"]
     assert splits
     assert all(240 <= (item.layover_gap_minutes or 0) <= 480 for item in splits)
 
@@ -221,5 +236,5 @@ def test_gap_filtering_still_applies_after_location_resolution() -> None:
 def test_booking_options_survive_location_search() -> None:
     service = SearchService(SearchOrchestrator(build_mock_orchestrator()))
     response = asyncio.run(service.search(request()))
-    assert response.ranked[0].booking_options
-    assert any(option.label == "Check on Trip.com" for option in response.ranked[0].booking_options)
+    assert response.results.ranked_results[0].booking_options
+    assert any(option.label == "Check on Trip.com" for option in response.results.ranked_results[0].booking_options)

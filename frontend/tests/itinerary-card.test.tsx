@@ -1,7 +1,10 @@
-import { render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ItineraryCard } from "@/components/itinerary-card";
-import { BookingOptionType, Cabin, ItineraryType, PriceConfidence, PriceStatus, RiskLevel, Supplier, type Itinerary, type Segment } from "@/lib/types";
+import { verifyBookingOption } from "@/lib/api";
+import { BookingOptionType, Cabin, ItineraryType, PriceStatus, RiskLevel, Supplier, VerificationStatus, type Itinerary, type Segment } from "@/lib/types";
+
+vi.mock("@/lib/api", () => ({ verifyBookingOption: vi.fn() }));
 
 const segment: Segment = {
   id: "one", origin: "MEL", destination: "BKK", departureAt: "2026-08-12T07:00:00Z",
@@ -17,13 +20,15 @@ const itinerary: Itinerary = {
   savingsVsBaseline: 400, valueScore: 72, warnings: [warning, connectionWarning], riskAssessment: { score: 45, level: RiskLevel.Medium, warnings: [warning, connectionWarning] },
   suppliers: [Supplier.MockSky], lastCheckedAt: "2026-08-12T00:00:00Z", expiresAt: "2026-08-12T02:00:00Z",
   priceFreshness: { lastCheckedAt: "2026-08-12T00:00:00Z", expiresAt: "2026-08-12T02:00:00Z", isExpired: false },
-  bookingOptions: [{ type: BookingOptionType.Supplier, label: "Check on supplier", displayName: "Check on supplier", supplier: Supplier.MockSky, url: null, bookingUrl: null, priceAmount: 720, currency: "AUD", priceConfidence: PriceConfidence.Confirmed, priceStatus: PriceStatus.Confirmed, verificationRequired: true, trackingId: null, lastCheckedAt: "2026-08-12T00:00:00Z", expiresAt: "2026-08-12T02:00:00Z", notes: [], warnings: [] }],
+  bookingOptions: [{ id: "one-two:supplier:1:offer-one", type: BookingOptionType.Supplier, label: "Verify demo price", displayName: "Ticket with MockSky", supplier: Supplier.MockSky, offerId: "offer-one", capabilities: { supportsSearch: true, supportsPriceVerify: true, supportsBookingUrl: false, supportsBaggageInfo: true, supportsSplitTicket: true, supportsLivePrice: false, supportsAffiliateLink: false }, url: null, bookingUrl: null, priceAmount: 720, currency: "AUD", priceStatus: PriceStatus.Confirmed, verificationRequired: true, trackingId: null, lastCheckedAt: "2026-08-12T00:00:00Z", expiresAt: "2026-08-12T02:00:00Z", notes: [], warnings: [] }],
   priceSourceCoverage: { confirmedSupplierCount: 1, cachedSupplierCount: 0, estimatedSupplierCount: 0, redirectOnlySupplierCount: 0, checkRequiredSupplierCount: 0, unavailableSupplierCount: 0, labels: ["Check on supplier"] },
   segments: [segment],
-  offers: [{ id: "offer-one", supplier: Supplier.MockSky, origin: "MEL", destination: "BKK", departureAt: segment.departureAt, arrivalAt: segment.arrivalAt, airline: "TG", operatingAirline: "TG", flightNumber: "TG466", priceAmount: 390, currency: "AUD", cabin: Cabin.Economy, baggageIncluded: true, bookingUrl: null, rawPayload: { fixture: "one" }, lastCheckedAt: "2026-08-12T00:00:00Z", expiresAt: "2026-08-12T02:00:00Z", segments: [segment], protectedConnection: false }],
+  offers: [{ id: "offer-one", supplier: Supplier.MockSky, origin: "MEL", destination: "BKK", departureAt: segment.departureAt, arrivalAt: segment.arrivalAt, airline: "TG", operatingAirline: "TG", flightNumber: "TG466", priceAmount: 390, currency: "AUD", priceStatus: PriceStatus.Confirmed, cabin: Cabin.Economy, baggageIncluded: true, bookingUrl: null, lastCheckedAt: "2026-08-12T00:00:00Z", expiresAt: "2026-08-12T02:00:00Z", segments: [segment], protectedConnection: false }],
 };
 
 describe("ItineraryCard", () => {
+  beforeEach(() => vi.mocked(verifyBookingOption).mockReset());
+
   it("shows required price, savings, risk, gap, duration and warning", () => {
     render(<ItineraryCard itinerary={itinerary} />);
     expect(screen.getByText("$720")).toBeInTheDocument();
@@ -32,5 +37,24 @@ describe("ItineraryCard", () => {
     expect(screen.getByText("4h at BKK")).toBeInTheDocument();
     expect(screen.getByText("18h 20m")).toBeInTheDocument();
     expect(screen.getByText(/second ticket may not be protected/i)).toBeInTheDocument();
+  });
+
+  it("verifies only the canonical booking option identifiers", async () => {
+    vi.mocked(verifyBookingOption).mockResolvedValue({
+      stillAvailable: true, currentPrice: 390, previousPrice: 390, currency: "AUD",
+      priceChanged: false, bookingUrl: null, checkedAt: "2026-08-12T00:01:00Z",
+      expiresAt: "2026-08-12T00:06:00Z", status: VerificationStatus.Verified,
+      message: "Verified against deterministic mock data.", canContinue: false,
+      requiresPriceCheck: false,
+    });
+    render(<ItineraryCard itinerary={itinerary} searchId="search-1" demoData />);
+    fireEvent.click(screen.getByRole("button", { name: "Verify demo price" }));
+    await waitFor(() => expect(verifyBookingOption).toHaveBeenCalledWith({
+      searchId: "search-1",
+      itineraryId: "one-two",
+      bookingOptionId: "one-two:supplier:1:offer-one",
+    }));
+    expect(await screen.findByRole("dialog", { name: /review before leaving SplitFare/i })).toBeVisible();
+    expect(screen.getByText(/Current verified price/)).toBeVisible();
   });
 });

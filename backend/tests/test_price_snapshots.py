@@ -25,8 +25,8 @@ NOW = datetime(2026, 8, 12, tzinfo=timezone.utc)
 
 def search_request() -> SearchRequest:
     return SearchRequest(
-        origin="MEL",
-        destination="PVG",
+        originPlaceId="airport:MEL",
+        destinationPlaceId="airport:PVG",
         departureDate=date(2026, 8, 12),
         minGapHours=3,
         maxGapHours=12,

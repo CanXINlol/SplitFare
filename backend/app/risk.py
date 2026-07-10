@@ -1,4 +1,4 @@
-from app.models import ItineraryType, NormalizedFlightOffer, RiskAssessment, RiskLevel
+from app.models import ItineraryType, NormalizedFlightOffer, RiskAssessment, risk_level_for_score
 
 SELF_TRANSFER_WARNING = "This is a self-transfer itinerary."
 MISSED_CONNECTION_WARNING = (
@@ -77,12 +77,7 @@ def assess_itinerary_risk(
         warnings.append("A flight arrives after midnight or departs before 6am.")
 
     score = min(score, 100)
-    level = (
-        RiskLevel.low if score <= 25
-        else RiskLevel.medium if score <= 55
-        else RiskLevel.high if score <= 80
-        else RiskLevel.extreme
-    )
+    level = risk_level_for_score(score)
     return RiskAssessment(score=score, level=level, warnings=warnings)
 
 

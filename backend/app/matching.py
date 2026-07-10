@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from decimal import Decimal
 
 from app.models import (
     Itinerary,
@@ -35,10 +36,17 @@ def airports_can_connect(arrival_airport: str, departure_airport: str) -> bool:
     )
 
 
+def connectable_departure_airports(arrival_airport: str) -> frozenset[str]:
+    for group in SAME_CITY_AIRPORT_GROUPS:
+        if arrival_airport in group:
+            return group
+    return frozenset({arrival_airport})
+
+
 def _build_itinerary(
     offers: tuple[NormalizedFlightOffer, ...],
     itinerary_type: ItineraryType,
-    baseline_price: float | None,
+    baseline_price: Decimal | None,
     checked_baggage_likely_required: bool,
     visa_transit_requirement_unknown: bool,
 ) -> Itinerary:
@@ -87,7 +95,7 @@ def _build_itinerary(
 
 
 def _with_value_scores(
-    itineraries: list[Itinerary], baseline_price: float | None
+    itineraries: list[Itinerary], baseline_price: Decimal | None
 ) -> list[Itinerary]:
     if not itineraries:
         return []
@@ -98,7 +106,7 @@ def _with_value_scores(
     for itinerary in itineraries:
         savings = itinerary.savings_vs_baseline
         savings_score = (
-            max(0.0, min(1.0, savings / baseline_price))
+            max(0.0, min(1.0, float(savings / baseline_price)))
             if savings is not None and baseline_price and baseline_price > 0
             else 0.0
         )
@@ -158,10 +166,18 @@ def match_flight_offers(request: MatchingRequest) -> MatchingResult:
 
     first_legs = [offer for offer in dated if offer.origin == request.origin]
     second_legs = [offer for offer in offers if offer.destination == request.destination]
+    second_by_origin: dict[str, list[NormalizedFlightOffer]] = {}
+    for offer in second_legs:
+        second_by_origin.setdefault(offer.origin, []).append(offer)
     split: list[Itinerary] = []
     for first in first_legs:
-        for second in second_legs:
-            if first.id == second.id or not airports_can_connect(first.destination, second.origin):
+        candidates = [
+            second
+            for airport in sorted(connectable_departure_airports(first.destination))
+            for second in second_by_origin.get(airport, [])
+        ]
+        for second in candidates:
+            if first.id == second.id:
                 continue
             if second.departure_at <= first.arrival_at:
                 continue

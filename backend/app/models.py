@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 from datetime import date, datetime
+from decimal import Decimal
 from enum import Enum
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_serializer, field_validator, model_validator
 
 
 def to_camel(value: str) -> str:
@@ -14,6 +15,20 @@ def to_camel(value: str) -> str:
 
 class ApiModel(BaseModel):
     model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True, extra="forbid")
+
+    @field_serializer("*", when_used="json", check_fields=False)
+    def serialize_decimal_fields(self, value: object) -> object:
+        return float(value) if isinstance(value, Decimal) else value
+
+
+def validate_booking_url(value: HttpUrl | None) -> HttpUrl | None:
+    if value is None:
+        return None
+    if value.username or value.password:
+        raise ValueError("booking URLs cannot contain credentials")
+    if value.scheme == "http" and value.host not in {"localhost", "127.0.0.1", "::1"}:
+        raise ValueError("external booking URLs must use HTTPS")
+    return value
 
 
 class Supplier(str, Enum):
@@ -37,6 +52,16 @@ class RiskLevel(str, Enum):
     extreme = "extreme"
 
 
+def risk_level_for_score(score: int) -> RiskLevel:
+    if score <= 25:
+        return RiskLevel.low
+    if score <= 55:
+        return RiskLevel.medium
+    if score <= 80:
+        return RiskLevel.high
+    return RiskLevel.extreme
+
+
 class Cabin(str, Enum):
     economy = "economy"
     premium_economy = "premium_economy"
@@ -55,6 +80,7 @@ class VerificationStatus(str, Enum):
     unavailable = "unavailable"
     not_configured = "not_configured"
     unsupported = "unsupported"
+    timeout = "timeout"
 
 
 class BookingOptionType(str, Enum):
@@ -62,12 +88,6 @@ class BookingOptionType(str, Enum):
     trip_com = "trip_com"
     skyscanner = "skyscanner"
     supplier = "supplier"
-
-
-class PriceConfidence(str, Enum):
-    confirmed = "confirmed"
-    check_required = "check_required"
-    unavailable = "unavailable"
 
 
 class PriceStatus(str, Enum):
@@ -154,18 +174,6 @@ class SearchRequest(ApiModel):
     promo_code_note: str | None = Field(default=None, max_length=240)
     member_price_note: str | None = Field(default=None, max_length=240)
 
-    @model_validator(mode="before")
-    @classmethod
-    def accept_legacy_iata_fields(cls, value: object) -> object:
-        if not isinstance(value, dict):
-            return value
-        data = dict(value)
-        if "originPlaceId" not in data and "origin_place_id" not in data and "origin" in data:
-            data["originPlaceId"] = f"airport:{str(data.pop('origin')).strip().upper()}"
-        if "destinationPlaceId" not in data and "destination_place_id" not in data and "destination" in data:
-            data["destinationPlaceId"] = f"airport:{str(data.pop('destination')).strip().upper()}"
-        return data
-
     @field_validator("currency", mode="before")
     @classmethod
     def normalize_currency(cls, value: object) -> object:
@@ -239,7 +247,7 @@ class PriceVerification(ApiModel):
     supplier: Supplier
     status: VerificationStatus
     price_status: PriceStatus = PriceStatus.unavailable
-    price_amount: float | None = Field(default=None, gt=0)
+    price_amount: Decimal | None = Field(default=None, gt=0)
     currency: str | None = Field(default=None, pattern=r"^[A-Z]{3}$")
     checked_at: datetime
     expires_at: datetime | None = None
@@ -291,22 +299,15 @@ class VerifyPriceResult(PriceVerification):
 
 
 class PreBookingVerificationRequest(ApiModel):
-    search_id: str | None = None
+    search_id: str = Field(min_length=1, max_length=80)
     itinerary_id: str = Field(min_length=1)
-    offer_id: str | None = None
-    supplier: Supplier
-    booking_option_type: BookingOptionType
-    booking_option_label: str = Field(min_length=1)
-    previous_price: float | None = Field(default=None, gt=0, allow_inf_nan=False)
-    currency: str | None = Field(default=None, pattern=r"^[A-Z]{3}$")
-    booking_url: HttpUrl | None = None
-    tracking_id: str | None = None
+    booking_option_id: str = Field(min_length=1, max_length=500)
 
 
 class PreBookingVerificationResponse(ApiModel):
     still_available: bool
-    current_price: float | None = Field(default=None, gt=0, allow_inf_nan=False)
-    previous_price: float | None = Field(default=None, gt=0, allow_inf_nan=False)
+    current_price: Decimal | None = Field(default=None, gt=0, allow_inf_nan=False)
+    previous_price: Decimal | None = Field(default=None, gt=0, allow_inf_nan=False)
     currency: str | None = Field(default=None, pattern=r"^[A-Z]{3}$")
     price_changed: bool
     booking_url: HttpUrl | None = None
@@ -377,8 +378,11 @@ class AirportSearchMatrix(ApiModel):
     origin_airports: list[CandidateAirport] = Field(min_length=1, max_length=3)
     destination_airports: list[CandidateAirport] = Field(min_length=1, max_length=3)
     hubs: list[CandidateAirport] = Field(default_factory=list, max_length=12)
+    excluded_hubs: list[str] = Field(default_factory=list)
     baseline_pairs: list[FlightQuery]
     query_plan: list[FlightQuery]
+    query_plan_truncated: bool = False
+    max_route_queries: int = Field(ge=1)
 
 
 class SearchError(ApiModel):
@@ -408,16 +412,34 @@ class PriceFreshness(ApiModel):
         return self
 
 
+class SearchMetadata(ApiModel):
+    mode: str = Field(pattern=r"^(mock|live)$")
+    demo_data: bool
+    searched_origin_airports: list[str]
+    searched_destination_airports: list[str]
+    searched_hubs: list[str]
+    excluded_airports: list[str] = Field(default_factory=list)
+    supplier_errors: list[SearchError] = Field(default_factory=list)
+    route_query_count: int = Field(ge=0)
+    supplier_query_count: int = Field(ge=0)
+    supplier_query_limit: int = Field(ge=1)
+    query_plan_truncated: bool = False
+    fresh_price_count: int = Field(ge=0)
+    expired_price_count: int = Field(ge=0)
+
+
 class BookingOption(ApiModel):
+    id: str = Field(min_length=1)
     type: BookingOptionType
     label: str = Field(min_length=1)
     display_name: str | None = None
     supplier: Supplier | None = None
+    offer_id: str | None = None
+    capabilities: SupplierCapabilities = Field(default_factory=SupplierCapabilities)
     url: HttpUrl | None = None
     booking_url: HttpUrl | None = None
-    price_amount: float | None = Field(default=None, gt=0, allow_inf_nan=False)
+    price_amount: Decimal | None = Field(default=None, gt=0, allow_inf_nan=False)
     currency: str | None = Field(default=None, pattern=r"^[A-Z]{3}$")
-    price_confidence: PriceConfidence
     price_status: PriceStatus = PriceStatus.unavailable
     verification_required: bool = True
     tracking_id: str | None = None
@@ -425,6 +447,11 @@ class BookingOption(ApiModel):
     expires_at: datetime | None = None
     notes: list[str] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
+
+    @field_validator("url", "booking_url")
+    @classmethod
+    def require_safe_url(cls, value: HttpUrl | None) -> HttpUrl | None:
+        return validate_booking_url(value)
 
     @model_validator(mode="before")
     @classmethod
@@ -438,14 +465,6 @@ class BookingOption(ApiModel):
             data["bookingUrl"] = data["url"]
         if "url" not in data and "bookingUrl" in data:
             data["url"] = data["bookingUrl"]
-        if "price_status" not in data and "priceStatus" not in data:
-            confidence = data.get("price_confidence", data.get("priceConfidence"))
-            if confidence == PriceConfidence.confirmed or confidence == PriceConfidence.confirmed.value:
-                data["priceStatus"] = PriceStatus.confirmed
-            elif confidence == PriceConfidence.check_required or confidence == PriceConfidence.check_required.value:
-                data["priceStatus"] = PriceStatus.redirect_only
-            else:
-                data["priceStatus"] = PriceStatus.unavailable
         return data
 
     @field_validator("last_checked_at", "expires_at")
@@ -456,7 +475,7 @@ class BookingOption(ApiModel):
         return value
 
     @model_validator(mode="after")
-    def validate_price_confidence(self) -> BookingOption:
+    def validate_price_status(self) -> BookingOption:
         if self.url is None and self.booking_url is not None:
             object.__setattr__(self, "url", self.booking_url)
         if self.booking_url is None and self.url is not None:
@@ -464,18 +483,23 @@ class BookingOption(ApiModel):
         if self.display_name is None:
             object.__setattr__(self, "display_name", self.label)
         if self.type == BookingOptionType.trip_com and (
-            self.price_confidence == PriceConfidence.confirmed
-            or self.price_status == PriceStatus.confirmed
+            self.price_status == PriceStatus.confirmed
         ):
             raise ValueError("Trip.com affiliate/deep-link prices cannot be marked confirmed.")
         if self.price_status == PriceStatus.redirect_only and self.price_amount is not None:
             raise ValueError("redirect-only booking options cannot include a confirmed price amount")
-        if self.price_confidence == PriceConfidence.confirmed and self.price_status != PriceStatus.confirmed:
-            raise ValueError("confirmed price_confidence requires price_status=confirmed")
         if self.price_status == PriceStatus.confirmed and (
             self.price_amount is None or self.currency is None
         ):
             raise ValueError("confirmed booking options require price and currency")
+        if (
+            self.price_status == PriceStatus.confirmed
+            and self.expires_at is not None
+            and self.expires_at <= datetime.now(self.expires_at.tzinfo)
+        ):
+            object.__setattr__(self, "price_status", PriceStatus.cached)
+        if self.capabilities.supports_price_verify and self.offer_id is None:
+            raise ValueError("price-verifiable booking options require an offer_id")
         return self
 
 
@@ -499,8 +523,9 @@ class NormalizedFlightOffer(ApiModel):
     airline: str = Field(min_length=2)
     operating_airline: str = Field(min_length=2)
     flight_number: str = Field(min_length=3)
-    price_amount: float = Field(gt=0, allow_inf_nan=False)
+    price_amount: Decimal = Field(gt=0, allow_inf_nan=False)
     currency: str = Field(pattern=r"^[A-Z]{3}$")
+    price_status: PriceStatus = PriceStatus.confirmed
     cabin: Cabin
     baggage_included: bool | None
     booking_url: HttpUrl | None = None
@@ -509,6 +534,11 @@ class NormalizedFlightOffer(ApiModel):
     expires_at: datetime
     segments: list[Segment] = Field(min_length=1)
     protected_connection: bool = False
+
+    @field_validator("booking_url")
+    @classmethod
+    def require_safe_booking_url(cls, value: HttpUrl | None) -> HttpUrl | None:
+        return validate_booking_url(value)
 
     @field_validator("departure_at", "arrival_at", "last_checked_at", "expires_at")
     @classmethod
@@ -544,7 +574,7 @@ class PriceSnapshot(ApiModel):
     departure_date: date
     passengers: int = Field(ge=1, le=9)
     cabin: Cabin
-    price_amount: float = Field(gt=0, allow_inf_nan=False)
+    price_amount: Decimal = Field(gt=0, allow_inf_nan=False)
     currency: str = Field(pattern=r"^[A-Z]{3}$")
     last_checked_at: datetime
     expires_at: datetime
@@ -583,8 +613,7 @@ class RiskAssessment(ApiModel):
 
     @model_validator(mode="after")
     def validate_level_matches_score(self) -> RiskAssessment:
-        expected = (RiskLevel.low if self.score <= 25 else RiskLevel.medium if self.score <= 55
-                    else RiskLevel.high if self.score <= 80 else RiskLevel.extreme)
+        expected = risk_level_for_score(self.score)
         if self.level != expected:
             raise ValueError(f"risk level {self.level} does not match score {self.score}")
         return self
@@ -593,14 +622,14 @@ class RiskAssessment(ApiModel):
 class Itinerary(ApiModel):
     id: str = Field(min_length=1)
     type: ItineraryType
-    total_price: float = Field(gt=0, allow_inf_nan=False)
+    total_price: Decimal = Field(gt=0, allow_inf_nan=False)
     currency: str = Field(pattern=r"^[A-Z]{3}$")
     total_duration_minutes: int = Field(gt=0)
     layover_airport: str | None = Field(default=None, pattern=r"^[A-Z]{3}$")
     layover_gap_minutes: int | None = Field(default=None, ge=0)
     risk_score: int = Field(ge=0, le=100)
     risk_level: RiskLevel
-    savings_vs_baseline: float | None = Field(default=None, allow_inf_nan=False)
+    savings_vs_baseline: Decimal | None = Field(default=None, allow_inf_nan=False)
     value_score: float = Field(ge=0, le=100)
     warnings: list[str]
     segments: list[Segment] = Field(min_length=1)
@@ -662,14 +691,14 @@ class MatchingRequest(ApiModel):
 class MatchingResult(ApiModel):
     protected_itineraries: list[Itinerary]
     split_ticket_itineraries: list[Itinerary]
-    baseline_price: float | None
+    baseline_price: Decimal | None
     ranked_results: list[Itinerary]
 
 
 class SearchResults(ApiModel):
     protected_itineraries: list[Itinerary]
     split_ticket_itineraries: list[Itinerary]
-    baseline_price: float | None
+    baseline_price: Decimal | None
     ranked_results: list[Itinerary]
 
 
@@ -680,12 +709,9 @@ class SearchResponse(ApiModel):
     errors: list[SearchError]
     explanation: str
     baseline: Itinerary | None
+    cheapest: Itinerary | None
     cheapest_split: Itinerary | None
     safest_split: Itinerary | None
-    ranked: list[Itinerary]
-    protected_itineraries: list[Itinerary]
-    split_ticket_itineraries: list[Itinerary]
-    baseline_price: float | None
-    ranked_results: list[Itinerary]
     supplier_failures: list[SupplierFailure] = Field(default_factory=list)
+    metadata: SearchMetadata
     disclaimer: str = Field(min_length=1)

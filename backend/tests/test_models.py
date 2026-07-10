@@ -117,9 +117,9 @@ def test_price_verification_never_confirms_expired_or_unavailable_price() -> Non
         )
 
 
-def test_search_request_normalizes_iata_and_validates_gap() -> None:
+def test_search_request_normalizes_airport_place_ids_and_validates_gap() -> None:
     request = SearchRequest(
-        origin=" mel ", destination="pvg", departureDate="2026-08-12",
+        originPlaceId=" airport:mel ", destinationPlaceId="airport:pvg", departureDate="2026-08-12",
         minGapHours=3, maxGapHours=12, passengers=1, cabin="economy",
     )
     assert (request.origin_place_id, request.destination_place_id) == ("airport:MEL", "airport:PVG")
@@ -127,6 +127,14 @@ def test_search_request_normalizes_iata_and_validates_gap() -> None:
         SearchRequest(
             originPlaceId="airport:MEL", destinationPlaceId="airport:PVG", departureDate="2026-08-12",
             minGapHours=10, maxGapHours=3, passengers=1, cabin="economy",
+        )
+
+
+def test_search_request_rejects_legacy_free_text_fields() -> None:
+    with pytest.raises(ValidationError):
+        SearchRequest(
+            origin="MEL", destination="PVG", departureDate="2026-08-12",
+            minGapHours=3, maxGapHours=12, passengers=1, cabin="economy",
         )
 
 

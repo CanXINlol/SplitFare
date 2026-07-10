@@ -1,88 +1,80 @@
-# SplitFare Release Checklist
+# SplitFare Release Checklist — Phase 14.5
 
-Use this checklist before tagging or deploying the mock Release Candidate.
+只有所有 release gate 均通过时才能标记 READY FOR RELEASE GATE。
 
-## Scope guardrails
+## Product alignment
 
-- [ ] No live flight API is enabled by default.
-- [ ] No Trip.com, Skyscanner, Duffel, airline, or OTA scraping is present.
-- [ ] No browser-exposed supplier API keys exist.
-- [ ] No payment, ticketing, login, or price-alert flow is enabled.
-- [ ] Example/deep links are labelled as check-required or mock handoff links.
-- [ ] Risk copy does not promise visa, baggage, delay, entry, or transfer feasibility.
+- [x] 产品比较 protected 与 split-ticket，不宣称全网最低。
+- [x] Self-transfer、独立订单、延误保护、行李与 visa unknown 显著显示。
+- [x] Redirect-only provider 不生成价格、不参与 ranking。
+- [x] Mock price、mock verification 与 Demo Data 可识别。
+- [x] 无支付、出票、登录、提醒或未授权抓取。
 
-## Automated checks
+## Location and matrix
 
-Run from the repository root unless noted.
+- [x] English/Chinese alias、IATA、city、startsWith、contains 有测试。
+- [x] MEL 精确输入 airport-first；Melbourne/墨尔本 city-first。
+- [x] City 提交稳定 place_id；airport 只解析自身。
+- [x] Autocomplete 有 debounce、loading、empty、error、keyboard 与 ARIA combobox。
+- [x] Melbourne → Shanghai 生成 MEL/AVV × PVG/SHA baseline。
+- [x] Origin/destination/hub、route query、supplier query 与并发均有上限。
+- [x] Truncation 通过 SearchResponse metadata 解释。
+- [x] Overnight second-leg operational dates 不改变单一用户 departure date 产品范围。
 
-- [ ] Backend tests pass:
+## Algorithm and risk
 
-  ```powershell
-  cd backend
-  .\.venv\Scripts\python.exe -m pytest -q
-  ```
+- [x] Timezone-aware datetime、跨时区、跨日、DST 与 gap boundary 有测试。
+- [x] Protected/split 严格区分；currency mismatch 拒绝；无 baseline savings=null。
+- [x] Dedup、stable ranking、max results 与 extreme-risk demotion 有测试。
+- [x] Matcher 按 second-leg origin 建索引，并由 matrix caps 防止组合爆炸。
+- [x] Risk score/level 只有后端来源，0–100 clamp，split 至少 medium。
 
-- [ ] Frontend type/lint gate passes:
+## Supplier, price, booking
 
-  ```powershell
-  cd frontend
-  npm run lint
-  ```
+- [x] Orchestrator 只调用 `supports_search=true` adapters。
+- [x] Supplier timeout/partial/invalid response 不导致整体 500。
+- [x] Supplier errors 清理 token/header，raw payload 默认不出后端。
+- [x] `PriceStatus` 是唯一价格状态 enum。
+- [x] Cache hit offer 标记 cached；过期价格不保持 confirmed。
+- [x] Split booking options 按 ticket/offer 绑定，价格之和等于 itinerary total。
+- [x] Verification request 只提交 search/itinerary/option IDs。
+- [x] Server canonical option 防止 price/URL 注入和 option 错绑。
+- [x] 外部 booking URL 只允许 HTTP(S)，非本地 HTTP 被拒绝。
 
-- [ ] Frontend unit tests pass:
+## Mock / production isolation
 
-  ```powershell
-  cd frontend
-  npm test -- --run
-  ```
+- [x] Backend production image 默认 `ENABLE_MOCK_SUPPLIER=false`。
+- [x] Production demo 必须显式启用 mock，并显示 Demo Data。
+- [x] Mock mode 强制禁用 Duffel live search，防止混排。
+- [x] Production CORS wildcard 启动失败。
+- [x] Production debug/raw payload 与 raw exception 被屏蔽。
+- [x] Production code response 无 example booking host。
+- [x] Frontend production Docker build 要求显式 API base URL。
 
-- [ ] Frontend production build passes:
+## Automated release gates
 
-  ```powershell
-  cd frontend
-  $env:NEXT_TELEMETRY_DISABLED="1"
-  npm run build
-  ```
+- [x] Backend Ruff：`.\.venv\Scripts\python.exe -m ruff check app tests`
+- [x] Backend pytest 已执行并通过（最终次数见 `AUDIT_REPORT.md`；旧 cache ACL 有环境 warning）
+- [x] Frontend typecheck：`npm run typecheck`
+- [x] Frontend ESLint：`npm run lint`
+- [ ] Frontend Vitest 最终复跑（工具审批额度阻止；之前 5 tests passed）
+- [ ] Playwright 最终复跑（扩展为 10 tests 后待执行；之前 3 passed、1 个已修正断言失败）
+- [ ] Frontend production build 最终复跑（Phase 14.5 修改后待执行）
+- [ ] Backend Docker build
+- [ ] Docker Compose startup + `/health` smoke test
+- [ ] 清理旧 `backend/.pytest_cache` ACL 目录
 
-- [ ] Playwright E2E passes:
+## Deployment gate
 
-  ```powershell
-  cd frontend
-  npm run test:e2e
-  ```
+- [ ] 设置 production `NEXT_PUBLIC_API_BASE_URL`。
+- [ ] 设置明确 `FRONTEND_ORIGIN`，无 wildcard。
+- [ ] 明确选择 production demo 或 production live。
+- [ ] 如使用 PostgreSQL，运行 Alembic migration 与 seed。
+- [ ] 如为多实例部署，实现共享 verification registry 与 rate limiter，或限制为单实例 demo。
+- [ ] 执行部署后 health、CORS、raw payload、rate limit、mock/live 与 redirect smoke tests。
 
-## Manual smoke tests
+## Rollback
 
-- [ ] Search `Melbourne` to `Shanghai` and confirm ranked results appear.
-- [ ] Search `墨尔本` to `上海` and confirm ranked results appear.
-- [ ] Search `PVG` to `MEL` and confirm the empty state appears without a crash.
-- [ ] Type an unsupported place and confirm a friendly validation error is shown.
-- [ ] Confirm result cards display concrete airports such as `Melbourne (MEL)` and `Shanghai Pudong (PVG)`.
-- [ ] Confirm split-ticket cards show self-transfer warnings.
-- [ ] Confirm gap filters remove itineraries outside the selected range.
-- [ ] Click `Check on Trip.com` and confirm the pre-booking verification modal opens.
-- [ ] Confirm unavailable verification disables the continue CTA.
-- [ ] Confirm price-change verification displays previous and current prices.
-
-## Deployment readiness
-
-- [ ] `README.md` reflects current setup, run, test, and mock limitations.
-- [ ] `docs/DEPLOYMENT.md` has current Vercel and backend hosting instructions.
-- [ ] `.env.example`, `frontend/.env.example`, and `backend/.env.example` are current.
-- [ ] `GET /health` returns `status`, `version`, `mode`, and `timestamp`.
-- [ ] Production `FRONTEND_ORIGIN` is explicit; wildcard CORS is not used.
-- [ ] `NEXT_PUBLIC_API_BASE_URL` points to the deployed backend.
-- [ ] `APP_ENV=production` does not expose raw stack traces or debug payloads.
-- [ ] `ENABLE_MOCK_SUPPLIER` is intentionally set for the deployment mode.
-- [ ] Search rate limiting is enabled with an appropriate `RATE_LIMIT_REQUESTS_PER_MINUTE`.
-- [ ] Environment variables are documented and no secret is committed.
-- [ ] Database migrations run successfully if Postgres persistence is enabled.
-- [ ] Redis is optional; app works when cache is unavailable.
-- [ ] Logs do not print supplier tokens, authorization headers, cards, passports, or payment data.
-- [ ] Known limitations are visible to users and maintainers.
-
-## Rollback plan
-
-- [ ] Keep the previous working commit/tag available.
-- [ ] Verify the app can run in mock-only mode with no external credentials.
-- [ ] If live supplier work is introduced later, add a feature flag and keep mock fallback enabled.
+- [ ] 保存上一 working image/tag。
+- [ ] 记录数据库 migration rollback/forward strategy。
+- [ ] Supplier 故障不得通过静默 mock fallback 掩盖。

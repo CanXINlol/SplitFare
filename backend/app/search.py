@@ -1,4 +1,5 @@
 import logging
+from collections import OrderedDict
 from datetime import datetime, timezone
 from uuid import uuid4
 
@@ -11,11 +12,15 @@ from app.models import (
     RiskLevel,
     Segment,
     SearchRequest,
+    SearchMetadata,
     SearchResponse,
     SearchResults,
     SearchStatus,
     SortOption,
     SupplierFailure,
+    BookingOption,
+    Supplier,
+    SupplierCapabilities,
 )
 from app.places import place_service
 from app.price_snapshots import PriceSnapshotRecorder
@@ -103,6 +108,42 @@ class SearchService:
         self.orchestrator = orchestrator
         self.price_snapshot_recorder = price_snapshot_recorder or PriceSnapshotRecorder()
         self.persistence_service = persistence_service
+        self._booking_registry: OrderedDict[str, dict[str, tuple[str, BookingOption]]] = OrderedDict()
+
+    @property
+    def supplier_capabilities(self) -> dict[Supplier, SupplierCapabilities]:
+        return {
+            adapter.name: adapter.capabilities
+            for adapter in self.orchestrator.supplier_orchestrator.adapters
+        }
+
+    @property
+    def demo_data(self) -> bool:
+        mock_suppliers = {Supplier.mock_sky, Supplier.demo_air, Supplier.budget_demo}
+        return any(adapter.name in mock_suppliers for adapter in self.orchestrator.supplier_orchestrator.adapters)
+
+    def _register_booking_options(self, response: SearchResponse) -> None:
+        contexts: dict[str, tuple[str, BookingOption]] = {}
+        itineraries = _dedupe_itineraries(
+            response.results.protected_itineraries
+            + response.results.split_ticket_itineraries
+            + response.results.ranked_results
+        )
+        for itinerary in itineraries:
+            for option in itinerary.booking_options:
+                contexts[option.id] = (itinerary.id, option)
+        self._booking_registry[response.search_id] = contexts
+        self._booking_registry.move_to_end(response.search_id)
+        while len(self._booking_registry) > 500:
+            self._booking_registry.popitem(last=False)
+
+    def get_booking_option(
+        self, search_id: str, itinerary_id: str, booking_option_id: str
+    ) -> BookingOption | None:
+        context = self._booking_registry.get(search_id, {}).get(booking_option_id)
+        if context is None or context[0] != itinerary_id:
+            return None
+        return context[1]
 
     async def search(self, request: SearchRequest) -> SearchResponse:
         search_id = str(uuid4())
@@ -135,6 +176,7 @@ class SearchService:
             ranked_results=[_with_airport_display(item) for item in result.ranked_results],
         )
         baseline = min(result.protected_itineraries, key=lambda item: item.total_price, default=None)
+        cheapest_overall = min(result.ranked_results, key=lambda item: item.total_price, default=None)
         cheapest = min(result.split_ticket_itineraries, key=lambda item: item.total_price, default=None)
         safest = min(
             result.split_ticket_itineraries,
@@ -147,14 +189,18 @@ class SearchService:
             + result.split_ticket_itineraries
             + result.ranked_results
             + ([baseline] if baseline else [])
+            + ([cheapest_overall] if cheapest_overall else [])
             + ([cheapest] if cheapest else [])
             + ([safest] if safest else []),
+            self.supplier_capabilities,
+            self.demo_data,
         )
         by_id = {itinerary.id: itinerary for itinerary in all_with_options}
         protected_itineraries = [by_id[itinerary.id] for itinerary in result.protected_itineraries]
         split_ticket_itineraries = [by_id[itinerary.id] for itinerary in result.split_ticket_itineraries]
         ranked_results = [by_id[itinerary.id] for itinerary in result.ranked_results]
         baseline = by_id.get(baseline.id) if baseline else None
+        cheapest_overall = by_id.get(cheapest_overall.id) if cheapest_overall else None
         cheapest = by_id.get(cheapest.id) if cheapest else None
         safest = by_id.get(safest.id) if safest else None
         status = (
@@ -175,6 +221,7 @@ class SearchService:
             baseline_price=result.baseline_price,
             ranked_results=ranked_results,
         )
+        now = datetime.now(timezone.utc)
         response = SearchResponse(
             search_id=search_id,
             status=status,
@@ -182,13 +229,9 @@ class SearchService:
             errors=list(supplier_result.errors),
             explanation=explanation,
             baseline=baseline,
+            cheapest=cheapest_overall,
             cheapest_split=cheapest,
             safest_split=safest,
-            ranked=ranked_results,
-            protected_itineraries=protected_itineraries,
-            split_ticket_itineraries=split_ticket_itineraries,
-            baseline_price=result.baseline_price,
-            ranked_results=ranked_results,
             supplier_failures=[
                 SupplierFailure(
                     supplier=error.supplier,
@@ -198,8 +241,28 @@ class SearchService:
                 for error in supplier_result.errors
                 if error.supplier is not None
             ],
-            disclaimer="Fictional mock fares only. Not live availability and not a guarantee of transit, baggage, visa or entry feasibility.",
+            metadata=SearchMetadata(
+                mode="mock" if self.demo_data else "live",
+                demo_data=self.demo_data,
+                searched_origin_airports=[item.iata_code for item in supplier_result.matrix.origin_airports],
+                searched_destination_airports=[item.iata_code for item in supplier_result.matrix.destination_airports],
+                searched_hubs=[item.iata_code for item in supplier_result.matrix.hubs],
+                excluded_airports=list(supplier_result.matrix.excluded_hubs),
+                supplier_errors=list(supplier_result.errors),
+                route_query_count=len(supplier_result.query_plan),
+                supplier_query_count=supplier_result.supplier_query_count,
+                supplier_query_limit=supplier_result.supplier_query_limit,
+                query_plan_truncated=supplier_result.matrix.query_plan_truncated,
+                fresh_price_count=sum(offer.expires_at > now for offer in supplier_result.offers),
+                expired_price_count=sum(offer.expires_at <= now for offer in supplier_result.offers),
+            ),
+            disclaimer=(
+                "Fictional demo fares only. Not live availability and not a guarantee of transit, baggage, visa or entry feasibility."
+                if self.demo_data
+                else "Results cover connected suppliers only and do not guarantee transit, baggage, visa or entry feasibility."
+            ),
         )
+        self._register_booking_options(response)
         if self.persistence_service is not None:
             try:
                 self.persistence_service.persist_search(request, response)

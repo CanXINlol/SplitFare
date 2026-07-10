@@ -1,8 +1,9 @@
 from datetime import date, datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 import pytest
 
-from app.matching import match_flight_offers
+from app.matching import duration_minutes, match_flight_offers
 from app.models import (
     Cabin,
     ItineraryType,
@@ -208,3 +209,23 @@ def test_first_leg_must_depart_on_requested_date() -> None:
     )
     result = match_flight_offers(request((direct, next_day_first, second)))
     assert not result.split_ticket_itineraries
+
+
+def test_gap_uses_absolute_time_across_different_timezones() -> None:
+    melbourne = ZoneInfo("Australia/Melbourne")
+    bangkok = ZoneInfo("Asia/Bangkok")
+    first = offer(
+        "first-zone", "MEL", "BKK", datetime(2026, 8, 12, 7, tzinfo=melbourne), 570, 300
+    )
+    second = offer(
+        "second-zone", "BKK", "PVG", datetime(2026, 8, 12, 16, 30, tzinfo=bangkok), 240, 300
+    )
+    result = match_flight_offers(request((first, second), 180, 180))
+    assert result.split_ticket_itineraries[0].layover_gap_minutes == 180
+
+
+def test_duration_handles_melbourne_daylight_saving_boundary() -> None:
+    melbourne = ZoneInfo("Australia/Melbourne")
+    start = datetime(2026, 10, 4, 1, 30, tzinfo=melbourne)
+    end = datetime(2026, 10, 4, 4, 30, tzinfo=melbourne)
+    assert duration_minutes(start.astimezone(timezone.utc), end.astimezone(timezone.utc)) == 120

@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import date, datetime
+from datetime import datetime
 from uuid import uuid4
 
-from app.models import Cabin, NormalizedFlightOffer, PriceSnapshot, SearchRequest
+from app.models import NormalizedFlightOffer, PriceSnapshot, SearchRequest
 
 
 CREATE_PRICE_SNAPSHOT_TABLE_SQL = """

@@ -19,6 +19,7 @@ from app.models import (
     SearchRequest,
     Supplier,
     VerificationStatus,
+    SupplierCapabilities,
 )
 
 
@@ -27,7 +28,7 @@ DEPARTURE_DATE = date(2026, 8, 12)
 
 def search_request() -> SearchRequest:
     return SearchRequest(
-        origin="MEL", destination="PVG", departureDate=DEPARTURE_DATE,
+        originPlaceId="airport:MEL", destinationPlaceId="airport:PVG", departureDate=DEPARTURE_DATE,
         minGapHours=3, maxGapHours=12, passengers=1, cabin="economy",
     )
 
@@ -68,6 +69,14 @@ def test_mock_price_verification_is_deterministic() -> None:
     assert result.currency == "AUD"
 
 
+def test_mock_supplier_explicit_timeout_and_partial_scenarios() -> None:
+    with pytest.raises(TimeoutError):
+        one_way(MockSupplierAdapter(scenario="timeout"))
+    full = one_way(MockSupplierAdapter())
+    partial = one_way(MockSupplierAdapter(scenario="partial"))
+    assert len(partial) == min(1, len(full))
+
+
 def test_optional_multi_city_defaults_to_unsupported() -> None:
     with pytest.raises(UnsupportedSupplierCapabilityError):
         MockSupplierAdapter().search_multi_city([], 1, Cabin.economy, "AUD")
@@ -85,13 +94,13 @@ def test_external_supplier_skeletons_are_not_configured(adapter) -> None:
     assert verification.supported is False
 
 
-def test_trip_com_adapter_only_builds_placeholder_deep_link() -> None:
+def test_trip_com_adapter_only_builds_safe_redirect_deep_link() -> None:
     adapter = TripComAffiliateAdapter()
     link = adapter.build_deep_link(
         "MEL", "PVG", DEPARTURE_DATE, 1, Cabin.economy, "AUD"
     )
-    assert link.startswith("https://example.invalid/tripcom-affiliate?")
-    assert "SPLITFARE_PLACEHOLDER" in link
+    assert link.startswith("https://www.trip.com/flights/?")
+    assert "tracking_id=splitfare_demo" in link
     assert one_way(adapter) == []
 
 
@@ -104,7 +113,7 @@ def test_trip_com_cannot_verify_prices() -> None:
 
 
 def test_supplier_capability_flags_are_explicit() -> None:
-    assert MockSupplierAdapter().capabilities.supports_live_price is True
+    assert MockSupplierAdapter().capabilities.supports_live_price is False
     assert MockSupplierAdapter().capabilities.supports_price_verify is True
     assert TripComAffiliateAdapter().capabilities.supports_affiliate_link is True
     assert TripComAffiliateAdapter().capabilities.supports_live_price is False
@@ -126,7 +135,7 @@ def test_orchestrator_combines_multiple_mock_suppliers() -> None:
     assert all(result.capabilities.supports_search for result in outcome.supplier_results)
 
 
-def test_one_supplier_failure_does_not_discard_other_results() -> None:
+def test_non_search_adapters_are_skipped_without_discarding_results() -> None:
     orchestrator = SupplierOrchestrator([
         DuffelSupplierAdapter(),
         MockSupplierAdapter(Supplier.mock_sky),
@@ -134,10 +143,24 @@ def test_one_supplier_failure_does_not_discard_other_results() -> None:
     ])
     outcome = orchestrator.search(search_request())
     assert outcome.offers
-    assert {failure.supplier for failure in outcome.failures} == {
-        Supplier.duffel, Supplier.skyscanner,
-    }
-    assert any(result.errors for result in outcome.supplier_results)
+    assert outcome.failures == []
+    assert {result.supplier for result in outcome.supplier_results} == {Supplier.mock_sky}
+
+
+def test_search_capable_supplier_failure_does_not_discard_other_results() -> None:
+    class FailingSearchAdapter(DuffelSupplierAdapter):
+        @property
+        def capabilities(self):
+            return SupplierCapabilities(supports_search=True)
+
+        def _fetch_one_way(self, *args, **kwargs):
+            raise RuntimeError("supplier failed")
+
+    outcome = SupplierOrchestrator([
+        FailingSearchAdapter(), MockSupplierAdapter(Supplier.mock_sky)
+    ]).search(search_request())
+    assert outcome.offers
+    assert {failure.supplier for failure in outcome.failures} == {Supplier.duffel}
 
 
 def test_orchestrator_rejects_supplier_mismatch_without_breaking_others() -> None:

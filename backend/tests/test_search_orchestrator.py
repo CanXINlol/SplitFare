@@ -6,7 +6,7 @@ from app.adapters.duffel import DuffelSupplierAdapter
 from app.adapters.mock_supplier import MockSupplierAdapter
 from app.adapters.orchestrator import SupplierOrchestrator
 from app.adapters.trip_com import TripComAffiliateAdapter
-from app.models import Cabin, SearchRequest, SearchStatus, Supplier
+from app.models import Cabin, SearchRequest, SearchStatus, Supplier, SupplierCapabilities
 from app.search import SearchService
 from app.search_orchestrator import (
     MAX_HUBS,
@@ -18,7 +18,7 @@ from app.search_orchestrator import (
 
 def request(hubs: list[str] | None = None) -> SearchRequest:
     return SearchRequest(
-        origin="MEL", destination="PVG", departureDate=date(2026, 8, 12),
+        originPlaceId="airport:MEL", destinationPlaceId="airport:PVG", departureDate=date(2026, 8, 12),
         minGapHours=3, maxGapHours=12, passengers=1, cabin="economy",
         candidateHubs=hubs,
     )
@@ -35,6 +35,10 @@ class DelayedMockAdapter(MockSupplierAdapter):
 
 
 class SecretFailureAdapter(DuffelSupplierAdapter):
+    @property
+    def capabilities(self):
+        return SupplierCapabilities(supports_search=True)
+
     def _fetch_one_way(self, *args, **kwargs):
         raise RuntimeError(
             "api_key=super-secret token:also-secret Authorization=Bearer-secret Bearer abc.xyz"
@@ -54,7 +58,7 @@ def test_mel_to_pvg_generates_baseline_and_hub_query_plan() -> None:
     assert plan[0].origin == "MEL" and plan[0].destination == "PVG"
     assert plan[0].kind == "baseline"
     assert len(generate_candidate_hubs(request())) == MAX_HUBS
-    assert len(plan) == 1 + MAX_HUBS * 2
+    assert len(plan) == 1 + MAX_HUBS * 3
     assert any(item.origin == "MEL" and item.destination == "BKK" for item in plan)
     assert any(item.origin == "BKK" and item.destination == "PVG" for item in plan)
 
@@ -62,7 +66,7 @@ def test_mel_to_pvg_generates_baseline_and_hub_query_plan() -> None:
 def test_custom_hubs_are_deduplicated_without_recursion() -> None:
     search_request = request(["BKK", "BKK", "SIN"])
     assert generate_candidate_hubs(search_request) == ("BKK", "SIN")
-    assert len(generate_query_plan(search_request)) == 5
+    assert len(generate_query_plan(search_request)) == 7
 
 
 def test_route_queries_run_concurrently() -> None:

@@ -5,17 +5,18 @@ from app.models import (
     BookingOption,
     BookingOptionType,
     Itinerary,
-    PriceConfidence,
     PriceSourceCoverage,
     PriceStatus,
     SearchRequest,
     Supplier,
+    SupplierCapabilities,
 )
 
 
 PRICE_MAY_CHANGE_NOTE = "Price may change at checkout."
-TRIP_COM_UNCONFIRMED_NOTE = "Trip.com affiliate/deep-link option only; price must be checked on Trip.com."
-SKYSCANNER_UNCONFIGURED_NOTE = "Skyscanner partner API is not configured in this demo."
+TRIP_COM_UNCONFIRMED_NOTE = "Trip.com redirect only; SplitFare cannot confirm its price."
+SKYSCANNER_UNCONFIGURED_NOTE = "Skyscanner is a redirect-only option in this demo."
+SKYSCANNER_REDIRECT_URL = "https://www.skyscanner.com/transport/flights/"
 
 
 def _manual_notes(request: SearchRequest) -> list[str]:
@@ -27,10 +28,52 @@ def _manual_notes(request: SearchRequest) -> list[str]:
     return notes
 
 
-def build_booking_options(request: SearchRequest, itinerary: Itinerary) -> list[BookingOption]:
-    first_offer = itinerary.offers[0]
+def build_booking_options(
+    request: SearchRequest,
+    itinerary: Itinerary,
+    supplier_capabilities: dict[Supplier, SupplierCapabilities],
+    demo_data: bool,
+) -> list[BookingOption]:
     notes = [PRICE_MAY_CHANGE_NOTE, *_manual_notes(request)]
-    supplier_label = ", ".join(supplier.value for supplier in itinerary.suppliers)
+    options: list[BookingOption] = []
+    for index, offer in enumerate(itinerary.offers, start=1):
+        capabilities = supplier_capabilities.get(offer.supplier, SupplierCapabilities())
+        is_expired = offer.expires_at <= offer.last_checked_at or itinerary.price_freshness.is_expired
+        is_cached = offer.price_status == PriceStatus.cached or is_expired
+        ticket_label = f"Ticket {index}" if len(itinerary.offers) > 1 else "Itinerary"
+        warnings = []
+        if demo_data:
+            warnings.append("Confirmed against deterministic demo data, not a live supplier.")
+        if len(itinerary.offers) > 1:
+            warnings.append("This ticket is purchased separately from the other segment.")
+        warnings.append(PRICE_MAY_CHANGE_NOTE)
+        options.append(BookingOption(
+            id=f"{itinerary.id}:supplier:{index}:{offer.id}",
+            type=BookingOptionType.supplier,
+            label=f"Verify {ticket_label.lower()} demo price" if demo_data else f"Book {ticket_label.lower()}",
+            display_name=f"{ticket_label} with {offer.supplier.value}",
+            supplier=offer.supplier,
+            offer_id=offer.id,
+            capabilities=capabilities,
+            url=offer.booking_url,
+            price_amount=offer.price_amount,
+            currency=offer.currency,
+            price_status=PriceStatus.cached if is_cached else PriceStatus.confirmed,
+            verification_required=capabilities.supports_price_verify,
+            last_checked_at=offer.last_checked_at,
+            expires_at=offer.expires_at,
+            warnings=warnings,
+            notes=notes,
+        ))
+
+    trip_capabilities = supplier_capabilities.get(
+        Supplier.trip_com_affiliate,
+        SupplierCapabilities(supports_booking_url=True, supports_affiliate_link=True),
+    )
+    skyscanner_capabilities = supplier_capabilities.get(
+        Supplier.skyscanner,
+        SupplierCapabilities(supports_booking_url=True, supports_affiliate_link=True),
+    )
     trip_link = TripComAffiliateAdapter().build_deep_link(
         itinerary.segments[0].origin,
         itinerary.segments[-1].destination,
@@ -39,76 +82,48 @@ def build_booking_options(request: SearchRequest, itinerary: Itinerary) -> list[
         request.cabin,
         request.currency,
     )
-    return [
+    options.extend([
         BookingOption(
-            type=BookingOptionType.airline,
-            label="Book with airline",
-            display_name="Book with airline",
-            supplier=first_offer.supplier,
-            url=first_offer.booking_url,
-            price_amount=itinerary.total_price,
-            currency=itinerary.currency,
-            price_confidence=PriceConfidence.confirmed,
-            price_status=PriceStatus.confirmed,
-            verification_required=True,
-            last_checked_at=itinerary.last_checked_at,
-            expires_at=itinerary.expires_at,
-            warnings=["Price may change before checkout."],
-            notes=notes,
-        ),
-        BookingOption(
+            id=f"{itinerary.id}:trip-com",
             type=BookingOptionType.trip_com,
             label="Check on Trip.com",
             display_name="Check on Trip.com",
             supplier=Supplier.trip_com_affiliate,
+            capabilities=trip_capabilities,
             url=trip_link,
-            price_confidence=PriceConfidence.check_required,
             price_status=PriceStatus.redirect_only,
-            verification_required=True,
+            verification_required=False,
             tracking_id=TRIP_COM_TRACKING_ID,
             warnings=[TRIP_COM_UNCONFIRMED_NOTE, PRICE_MAY_CHANGE_NOTE],
             notes=[TRIP_COM_UNCONFIRMED_NOTE, *notes],
         ),
         BookingOption(
+            id=f"{itinerary.id}:skyscanner",
             type=BookingOptionType.skyscanner,
             label="Check on Skyscanner",
             display_name="Check on Skyscanner",
             supplier=Supplier.skyscanner,
-            url="https://example.invalid/skyscanner-redirect?tracking_id=SPLITFARE_PLACEHOLDER",
-            price_confidence=PriceConfidence.check_required,
+            capabilities=skyscanner_capabilities,
+            url=SKYSCANNER_REDIRECT_URL,
             price_status=PriceStatus.redirect_only,
-            verification_required=True,
-            warnings=["Skyscanner redirect-only option in this demo.", PRICE_MAY_CHANGE_NOTE],
+            verification_required=False,
+            warnings=[SKYSCANNER_UNCONFIGURED_NOTE, PRICE_MAY_CHANGE_NOTE],
             notes=[SKYSCANNER_UNCONFIGURED_NOTE, *notes],
         ),
-        BookingOption(
-            type=BookingOptionType.supplier,
-            label="Check on supplier",
-            display_name="Check on supplier",
-            supplier=first_offer.supplier,
-            url=first_offer.booking_url,
-            price_amount=itinerary.total_price,
-            currency=itinerary.currency,
-            price_confidence=PriceConfidence.confirmed,
-            price_status=PriceStatus.confirmed,
-            verification_required=True,
-            last_checked_at=itinerary.last_checked_at,
-            expires_at=itinerary.expires_at,
-            warnings=["Price may change before checkout."],
-            notes=[f"Supplier itinerary source: {supplier_label}.", *notes],
-        ),
-    ]
+    ])
+    return options
 
 
 def coverage_for_options(options: list[BookingOption]) -> PriceSourceCoverage:
-    confirmed = [option for option in options if option.price_confidence == PriceConfidence.confirmed]
+    confirmed = [option for option in options if option.price_status == PriceStatus.confirmed]
     cached = [option for option in options if option.price_status == PriceStatus.cached]
     estimated = [option for option in options if option.price_status == PriceStatus.estimated]
     redirect_only = [option for option in options if option.price_status == PriceStatus.redirect_only]
     check_required = [
-        option for option in options if option.price_confidence == PriceConfidence.check_required
+        option for option in options
+        if option.price_status in {PriceStatus.cached, PriceStatus.estimated, PriceStatus.redirect_only}
     ]
-    unavailable = [option for option in options if option.price_confidence == PriceConfidence.unavailable]
+    unavailable = [option for option in options if option.price_status == PriceStatus.unavailable]
     return PriceSourceCoverage(
         confirmed_supplier_count=len(confirmed),
         cached_supplier_count=len(cached),
@@ -120,10 +135,15 @@ def coverage_for_options(options: list[BookingOption]) -> PriceSourceCoverage:
     )
 
 
-def attach_booking_options(request: SearchRequest, itineraries: list[Itinerary]) -> list[Itinerary]:
+def attach_booking_options(
+    request: SearchRequest,
+    itineraries: list[Itinerary],
+    supplier_capabilities: dict[Supplier, SupplierCapabilities],
+    demo_data: bool,
+) -> list[Itinerary]:
     updated: list[Itinerary] = []
     for itinerary in itineraries:
-        options = build_booking_options(request, itinerary)
+        options = build_booking_options(request, itinerary, supplier_capabilities, demo_data)
         updated.append(itinerary.model_copy(update={
             "booking_options": options,
             "price_source_coverage": coverage_for_options(options),

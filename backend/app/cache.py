@@ -148,7 +148,7 @@ class RedisCache:
             )
             stored = True
         if stored:
-            logger.info("cache.store key=%s ttl=%s", key, ttl_seconds)
+            logger.debug("cache.store key=%s ttl=%s", key, ttl_seconds)
 
     def get_or_fetch(
         self,
@@ -163,12 +163,12 @@ class RedisCache:
         if enabled:
             cached = self.get_json(key)
             if cached is not None:
-                logger.info("cache.hit key=%s", key)
+                logger.debug("cache.hit key=%s", key)
                 try:
                     return deserialize(cached)
                 except Exception as exception:
                     logger.info("cache.decode_failed key=%s reason=%s", key, type(exception).__name__)
-            logger.info("cache.miss key=%s", key)
+            logger.debug("cache.miss key=%s", key)
 
         value = fetch()
         if enabled and ttl_seconds > 0:
@@ -192,6 +192,6 @@ class RedisCache:
             return None
         if entry.expires_at <= datetime.now(timezone.utc):
             self._memory.pop(key, None)
-            logger.info("cache.expired key=%s", key)
+            logger.debug("cache.expired key=%s", key)
             return None
         return entry.value

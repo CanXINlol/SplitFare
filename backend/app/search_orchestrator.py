@@ -26,6 +26,8 @@ class OrchestratedOffers:
     errors: tuple[SearchError, ...]
     query_plan: tuple[FlightQuery, ...]
     matrix: AirportSearchMatrix
+    supplier_query_count: int
+    supplier_query_limit: int
 
 
 def generate_candidate_hubs(request: SearchRequest) -> tuple[str, ...]:
@@ -52,10 +54,12 @@ class SearchOrchestrator:
         supplier_orchestrator: SupplierOrchestrator,
         total_timeout_seconds: float = 30,
         cache: RedisCache | None = None,
+        max_supplier_queries_per_search: int = 120,
     ):
         self.supplier_orchestrator = supplier_orchestrator
         self.total_timeout_seconds = total_timeout_seconds
         self.cache = cache
+        self.max_supplier_queries_per_search = max(1, max_supplier_queries_per_search)
 
     def _cached_candidate_hubs(self, request: SearchRequest) -> tuple[str, ...]:
         if self.cache is None or request.candidate_hubs is not None:
@@ -70,7 +74,13 @@ class SearchOrchestrator:
         )
 
     def _matrix(self, request: SearchRequest) -> AirportSearchMatrix:
-        return place_service.build_matrix(request, self._cached_candidate_hubs(request))
+        supplier_count = max(1, len(self.supplier_orchestrator.searchable_adapters))
+        max_route_queries = max(1, self.max_supplier_queries_per_search // supplier_count)
+        return place_service.build_matrix(
+            request,
+            self._cached_candidate_hubs(request),
+            max_route_queries=max_route_queries,
+        )
 
     async def _run_query(
         self, query: FlightQuery, request: SearchRequest
@@ -97,8 +107,9 @@ class SearchOrchestrator:
         )
         offers: list[NormalizedFlightOffer] = []
         errors: list[SearchError] = []
-        for task in done:
-            query = task_to_query[task]
+        for task, query in task_to_query.items():
+            if task not in done:
+                continue
             try:
                 result = task.result()
                 offers.extend(result.offers)
@@ -111,8 +122,9 @@ class SearchOrchestrator:
                     code=type(exception).__name__,
                     message=sanitize_error_message(str(exception)),
                 ))
-        for task in pending:
-            query = task_to_query[task]
+        for task, query in task_to_query.items():
+            if task not in pending:
+                continue
             task.cancel()
             errors.append(SearchError(
                 supplier=None,
@@ -137,7 +149,17 @@ class SearchOrchestrator:
             unique_errors.setdefault(key, error)
         return OrchestratedOffers(
             offers=tuple(unique_offers.values()),
-            errors=tuple(unique_errors.values()),
+            errors=tuple(sorted(
+                unique_errors.values(),
+                key=lambda error: (
+                    error.supplier.value if error.supplier else "",
+                    error.code,
+                    error.origin or "",
+                    error.destination or "",
+                ),
+            )),
             query_plan=plan,
             matrix=matrix,
+            supplier_query_count=len(plan) * len(self.supplier_orchestrator.searchable_adapters),
+            supplier_query_limit=self.max_supplier_queries_per_search,
         )

@@ -7,11 +7,15 @@ import type {
   SearchResponse,
 } from "./types";
 
-const API_URL = (
-  process.env.NEXT_PUBLIC_API_BASE_URL
-  ?? process.env.NEXT_PUBLIC_API_URL
-  ?? "http://localhost:8000"
-).replace(/\/$/, "");
+const configuredApiUrl = process.env.NEXT_PUBLIC_API_BASE_URL;
+if (process.env.NEXT_PUBLIC_APP_ENV === "production" && !configuredApiUrl) {
+  throw new Error("NEXT_PUBLIC_API_BASE_URL is required for production builds.");
+}
+const API_URL = (configuredApiUrl ?? "http://localhost:8000").replace(/\/$/, "");
+const apiProtocol = new URL(API_URL).protocol;
+if (apiProtocol !== "http:" && apiProtocol !== "https:") {
+  throw new Error("NEXT_PUBLIC_API_BASE_URL must use http or https.");
+}
 
 async function apiFetch(path: string, init?: RequestInit): Promise<Response> {
   try {

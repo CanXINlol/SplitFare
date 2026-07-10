@@ -48,6 +48,8 @@ export enum VerificationStatus {
   Expired = "expired",
   Unavailable = "unavailable",
   NotConfigured = "not_configured",
+  Unsupported = "unsupported",
+  Timeout = "timeout",
 }
 
 export enum BookingOptionType {
@@ -55,12 +57,6 @@ export enum BookingOptionType {
   TripCom = "trip_com",
   Skyscanner = "skyscanner",
   Supplier = "supplier",
-}
-
-export enum PriceConfidence {
-  Confirmed = "confirmed",
-  CheckRequired = "check_required",
-  Unavailable = "unavailable",
 }
 
 export enum PriceStatus {
@@ -157,10 +153,10 @@ export interface NormalizedFlightOffer {
   flightNumber: string;
   priceAmount: number;
   currency: string;
+  priceStatus: PriceStatus;
   cabin: Cabin;
   baggageIncluded: boolean | null;
   bookingUrl: string | null;
-  rawPayload?: Record<string, unknown>;
   lastCheckedAt: string;
   expiresAt: string;
   segments: Segment[];
@@ -180,15 +176,17 @@ export interface PriceFreshness {
 }
 
 export interface BookingOption {
+  id: string;
   type: BookingOptionType;
   label: string;
   displayName: string | null;
   supplier: Supplier | null;
+  offerId: string | null;
+  capabilities: SupplierCapabilities;
   url: string | null;
   bookingUrl: string | null;
   priceAmount: number | null;
   currency: string | null;
-  priceConfidence: PriceConfidence;
   priceStatus: PriceStatus;
   verificationRequired: boolean;
   trackingId: string | null;
@@ -250,16 +248,9 @@ export interface PriceVerification {
 }
 
 export interface PreBookingVerificationRequest {
-  searchId?: string | null;
+  searchId: string;
   itineraryId: string;
-  offerId?: string | null;
-  supplier: Supplier;
-  bookingOptionType: BookingOptionType;
-  bookingOptionLabel: string;
-  previousPrice?: number | null;
-  currency?: string | null;
-  bookingUrl?: string | null;
-  trackingId?: string | null;
+  bookingOptionId: string;
 }
 
 export interface PreBookingVerificationResponse {
@@ -284,15 +275,38 @@ export interface SearchResponse {
   errors: SearchError[];
   explanation: string;
   baseline: Itinerary | null;
+  cheapest: Itinerary | null;
   cheapestSplit: Itinerary | null;
   safestSplit: Itinerary | null;
-  ranked: Itinerary[];
-  protectedItineraries: Itinerary[];
-  splitTicketItineraries: Itinerary[];
-  baselinePrice: number | null;
-  rankedResults: Itinerary[];
   supplierFailures: SupplierFailure[];
+  metadata: SearchMetadata;
   disclaimer: string;
+}
+
+export interface SupplierCapabilities {
+  supportsSearch: boolean;
+  supportsPriceVerify: boolean;
+  supportsBookingUrl: boolean;
+  supportsBaggageInfo: boolean;
+  supportsSplitTicket: boolean;
+  supportsLivePrice: boolean;
+  supportsAffiliateLink: boolean;
+}
+
+export interface SearchMetadata {
+  mode: "mock" | "live";
+  demoData: boolean;
+  searchedOriginAirports: string[];
+  searchedDestinationAirports: string[];
+  searchedHubs: string[];
+  excludedAirports: string[];
+  supplierErrors: SearchError[];
+  routeQueryCount: number;
+  supplierQueryCount: number;
+  supplierQueryLimit: number;
+  queryPlanTruncated: boolean;
+  freshPriceCount: number;
+  expiredPriceCount: number;
 }
 
 export interface SearchResults {

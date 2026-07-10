@@ -17,6 +17,8 @@ from app.db_models import (
     SupplierRecord,
 )
 from app.models import SearchRequest
+from app.models import SearchResponse, SearchResults, SearchStatus, SearchMetadata
+from app.repositories import _stored_route_code
 from app.repositories import SearchPersistenceService, SearchRepository, sanitize_raw_payload
 from app.search import SearchService
 from app.search_orchestrator import SearchOrchestrator
@@ -39,6 +41,24 @@ def request() -> SearchRequest:
         cabin="economy",
         candidateHubs=["BKK", "SIN"],
     )
+
+
+def test_empty_search_storage_uses_resolved_primary_airport_not_city_id() -> None:
+    response = SearchResponse(
+        searchId="search-empty",
+        status=SearchStatus.empty,
+        results=SearchResults(protectedItineraries=[], splitTicketItineraries=[], baselinePrice=None, rankedResults=[]),
+        errors=[], explanation="empty", baseline=None, cheapest=None, cheapestSplit=None, safestSplit=None,
+        supplierFailures=[],
+        metadata=SearchMetadata(
+            mode="mock", demoData=True, searchedOriginAirports=["MEL", "AVV"],
+            searchedDestinationAirports=["PVG", "SHA"], searchedHubs=[], routeQueryCount=0,
+            supplierQueryCount=0, supplierQueryLimit=120, freshPriceCount=0, expiredPriceCount=0,
+        ),
+        disclaimer="demo",
+    )
+    assert _stored_route_code("city:melbourne-au", response, "origin") == "MEL"
+    assert _stored_route_code("city:shanghai-cn", response, "destination") == "PVG"
 
 
 def search_response():

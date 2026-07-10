@@ -1,4 +1,4 @@
-# SplitFare Release Checklist — Phase 14.5
+# SplitFare Release Checklist — Phase 14.6
 
 只有所有 release gate 均通过时才能标记 READY FOR RELEASE GATE。
 
@@ -12,15 +12,13 @@
 
 ## Location and matrix
 
-- [x] English/Chinese alias、IATA、city、startsWith、contains 有测试。
-- [x] MEL 精确输入 airport-first；Melbourne/墨尔本 city-first。
 - [x] 城市选择只提交稳定 `city_id`；用户不能直接选择机场。
 - [x] 大洲 → 国家/地区 → 城市层级来自唯一后端目录。
 - [x] 旧 Place autocomplete、alias、search/resolve API 已删除。
 - [x] 中文/英文覆盖首页、选择器、结果、风险、价格、错误与验价。
 - [x] 语言持久化且切换语言不触发航班重搜。
 - [x] 浏览器搜索状态和 flight cache 已升级到 v2。
-- [x] Autocomplete 有 debounce、loading、empty、error、keyboard 与 ARIA combobox。
+- [x] 城市选择器支持分层切换、触屏、键盘按钮、Escape 和移动端滚动。
 - [x] Melbourne → Shanghai 生成 MEL/AVV × PVG/SHA baseline。
 - [x] Origin/destination/hub、route query、supplier query 与并发均有上限。
 - [x] Truncation 通过 SearchResponse metadata 解释。
@@ -59,15 +57,15 @@
 ## Automated release gates
 
 - [x] Backend Ruff：`.\.venv\Scripts\python.exe -m ruff check app tests`
-- [x] Backend pytest 已执行并通过（最终次数见 `AUDIT_REPORT.md`；旧 cache ACL 有环境 warning）
+- [x] Backend pytest：148 passed；禁用无收益的 pytest cache 后无 ACL warning。
 - [x] Frontend typecheck：`npm run typecheck`
 - [x] Frontend ESLint：`npm run lint`
-- [ ] Frontend Vitest 最终复跑（工具审批额度阻止；之前 5 tests passed）
-- [ ] Playwright 最终复跑（扩展为 10 tests 后待执行；之前 3 passed、1 个已修正断言失败）
-- [ ] Frontend production build 最终复跑（Phase 14.5 修改后待执行）
-- [ ] Backend Docker build
-- [ ] Docker Compose startup + `/health` smoke test
-- [ ] 清理旧 `backend/.pytest_cache` ACL 目录
+- [x] Frontend Vitest：7 passed。
+- [x] Playwright mobile Chromium：5 passed。
+- [x] Frontend production build 完整通过。
+- [x] Backend 与 frontend Docker images 构建通过。
+- [x] Docker Compose startup、前端 HTTP 200 与 `/health` smoke test 通过。
+- [x] 旧 `.next`、`tsconfig.tsbuildinfo`、`.pytest_cache` 与 pytest 临时缓存已清理。
 
 ## Deployment gate
 

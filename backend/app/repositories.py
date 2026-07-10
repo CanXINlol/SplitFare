@@ -54,7 +54,12 @@ def _stored_route_code(city_id: str, response: SearchResponse, side: str) -> str
     if response.results.ranked_results:
         segment = response.results.ranked_results[0].segments[0 if side == "origin" else -1]
         return segment.origin if side == "origin" else segment.destination
-    return city_id
+    try:
+        from app.cities import city_service
+
+        return city_service.resolve(city_id).airports[0].iata_code
+    except ValueError:
+        return "LOC"
 
 
 def _supplier_cache_policy(supplier: Supplier) -> dict[str, Any]:

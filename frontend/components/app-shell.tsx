@@ -7,10 +7,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const { locale, setLocale, t } = useI18n();
   return <div className="app-shell">
     <header className="topbar">
-      <Link href="/" className="brand" aria-label="SplitFare home"><span className="brand-mark">S</span><span>{t("nav.product")}</span></Link>
-      <nav aria-label="Primary navigation">
+      <Link href="/" className="brand" aria-label={t("nav.home")}><span className="brand-mark">S</span><span>{t("nav.product")}</span></Link>
+      <nav aria-label={t("nav.primary")}>
         <Link href="/#how">{t("nav.how")}</Link><Link href="/#safety">{t("nav.safety")}</Link>
-        <button className="language-switch" type="button" onClick={() => setLocale(locale === "en" ? "zh" : "en")} aria-label="Switch language">{t("nav.language")}</button>
+        <button className="language-switch" type="button" onClick={() => setLocale(locale === "en" ? "zh" : "en")} aria-label={t("nav.switch")}>{t("nav.language")}</button>
       </nav>
     </header>
     <main>{children}</main>

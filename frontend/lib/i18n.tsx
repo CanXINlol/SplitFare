@@ -10,6 +10,7 @@ const en: Messages = {
   "nav.how": "How it works",
   "nav.safety": "Transfer safety",
   "nav.language": "中文",
+  "nav.home": "SplitFare home", "nav.primary": "Primary navigation", "nav.switch": "Switch language",
   "home.eyebrow": "Protected fares vs self-transfer combinations",
   "home.title": "See the savings. Understand the trade-off.",
   "home.subtitle": "Compare a conventional protected ticket with separately booked flights through one hub. All fares in this release are deterministic demo data.",
@@ -63,6 +64,7 @@ const en: Messages = {
   "results.safest": "Safest split",
   "results.best": "Best overall",
   "results.all": "All ranked options",
+  "results.ranked": "Ranked",
   "card.protected": "Protected ticket",
   "card.split": "Self-transfer · separate tickets",
   "card.savings": "Save {amount}",
@@ -92,6 +94,7 @@ const en: Messages = {
   "risk.extreme": "Extreme",
   "risk.help": "Risk scores are decision aids, not a guarantee.",
   "verify.title": "Check before continuing",
+  "verify.eyebrow": "Pre-booking check",
   "verify.checking": "Rechecking demo availability…",
   "verify.available": "Option available in demo data",
   "verify.unavailable": "This option is no longer available",
@@ -120,6 +123,7 @@ const en: Messages = {
 
 const zh: Messages = {
   "nav.product": "SplitFare 拆票助手", "nav.how": "工作原理", "nav.safety": "中转风险", "nav.language": "EN",
+  "nav.home": "SplitFare 首页", "nav.primary": "主导航", "nav.switch": "切换语言",
   "home.eyebrow": "联程保护票与自组中转对比", "home.title": "看清能省多少，也看清代价。",
   "home.subtitle": "对比普通联程票和经一个中转点、分别购买的航班组合。本版本全部价格均为确定性的模拟数据。", "home.mock": "模拟数据",
   "home.trust1.title": "风险透明", "home.trust1.body": "自助中转、行李与衔接风险始终可见。",
@@ -138,7 +142,7 @@ const zh: Messages = {
   "results.empty": "没有符合条件的行程", "results.emptyBody": "可尝试放宽中转时间或更换日期。",
   "results.error": "搜索未能完成", "results.retry": "重试", "results.partial": "部分供应商查询失败，以下仍展示可用的模拟结果。",
   "results.mock": "模拟价格，并非实时库存", "results.count": "共 {count} 条行程", "results.baseline": "联程基准",
-  "results.cheapest": "价格最低", "results.safest": "最安全拆票", "results.best": "综合最佳", "results.all": "全部排序结果",
+  "results.cheapest": "价格最低", "results.safest": "最安全拆票", "results.best": "综合最佳", "results.all": "全部排序结果", "results.ranked": "综合排序",
   "card.protected": "联程保护票", "card.split": "自助中转 · 分开出票", "card.savings": "节省 {amount}", "card.noSavings": "基准票价",
   "card.duration": "总耗时", "card.connection": "中转", "card.direct": "直飞 / 联程保护", "card.risk": "风险",
   "card.source": "价格来源", "card.baggageUnknown": "行李信息未知", "card.ticket": "第 {count} 张票", "card.flight": "航班",
@@ -147,7 +151,7 @@ const zh: Messages = {
   "price.confirmed": "已确认模拟价格", "price.cached": "缓存价格", "price.estimated": "估算价格",
   "price.redirect_only": "前往供应商查看", "price.unavailable": "不可用", "price.change": "结账时价格可能变化",
   "risk.low": "低", "risk.medium": "中", "risk.high": "高", "risk.extreme": "极高", "risk.help": "风险评分仅用于辅助判断，不构成保证。",
-  "verify.title": "继续前再次确认", "verify.checking": "正在检查模拟库存…", "verify.available": "模拟数据中仍可用",
+  "verify.title": "继续前再次确认", "verify.eyebrow": "购买前检查", "verify.checking": "正在检查模拟库存…", "verify.available": "模拟数据中仍可用",
   "verify.unavailable": "此选项已不可用", "verify.unsupported": "该供应商不支持验价", "verify.before": "之前价格", "verify.now": "当前价格",
   "verify.unchanged": "模拟价格未变化", "verify.changed": "价格已变化", "verify.close": "关闭", "verify.continue": "继续前往供应商",
   "verify.noRedirect": "此演示未配置外部购买链接。",
@@ -210,6 +214,7 @@ export function I18nProvider({ children }: { children: ReactNode }) {
     const saved = window.localStorage.getItem(STORAGE_KEY);
     setLocaleState(saved === "zh" || saved === "en" ? saved : navigator.language.toLowerCase().startsWith("zh") ? "zh" : "en");
   }, []);
+  useEffect(() => { document.documentElement.lang = locale === "zh" ? "zh-CN" : "en-AU"; }, [locale]);
   const setLocale = useCallback((next: Locale) => { setLocaleState(next); window.localStorage.setItem(STORAGE_KEY, next); }, []);
   const t = useCallback((key: string, params?: Record<string, string | number>) => {
     let value = dictionaries[locale][key] ?? dictionaries.en[key] ?? key;

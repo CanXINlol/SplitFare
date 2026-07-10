@@ -53,7 +53,7 @@ export function ResultsView() {
     <header className="results-head"><div><Link href="/" className="back-link">← {t("results.back")}</Link><span className="eyebrow">{t("results.mock")}</span><h1>{origin} <span>→</span> {destination}</h1><p>{t("results.subtitle")}</p></div><div className="matrix-summary"><strong>{data.metadata.searchedOriginAirports.join(" · ")}</strong><span>→</span><strong>{data.metadata.searchedDestinationAirports.join(" · ")}</strong><small>{t("results.count", { count: ranked.length })}</small></div></header>
     {data.status === "partial" && <div className="partial-banner">{t("results.partial")}</div>}
     <div className="featured-grid">{uniqueFeatured.map(({ key, itinerary }) => itinerary && <ItineraryCard key={itinerary.id} itinerary={itinerary} label={t(`results.${key}`)} searchId={data.searchId} originCity={origin} destinationCity={destination} />)}</div>
-    <div className="section-title"><span className="eyebrow">RANKED</span><h2>{t("results.all")}</h2><p>{t("results.count", { count: ranked.length })}</p></div>
+    <div className="section-title"><span className="eyebrow">{t("results.ranked")}</span><h2>{t("results.all")}</h2><p>{t("results.count", { count: ranked.length })}</p></div>
     <div className="result-list">{ranked.map((itinerary, index) => <ItineraryCard key={itinerary.id} itinerary={itinerary} label={`#${index + 1}`} searchId={data.searchId} originCity={origin} destinationCity={destination} />)}</div>
     <p className="results-disclaimer">{t("disclaimer")}</p>
   </section>;

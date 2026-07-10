@@ -37,12 +37,6 @@ export enum SearchStatus {
   Empty = "empty",
 }
 
-export enum PlaceType {
-  City = "city",
-  Airport = "airport",
-  MetroArea = "metro_area",
-}
-
 export enum VerificationStatus {
   Verified = "verified",
   Expired = "expired",
@@ -68,8 +62,8 @@ export enum PriceStatus {
 }
 
 export interface SearchRequest {
-  originPlaceId: string;
-  destinationPlaceId: string;
+  originCityId: string;
+  destinationCityId: string;
   departureDate: string;
   minGapHours: number;
   maxGapHours: number;
@@ -85,11 +79,6 @@ export interface SearchRequest {
   memberPriceNote?: string | null;
 }
 
-export interface PlaceAlias {
-  value: string;
-  locale: string | null;
-}
-
 export interface CandidateAirport {
   iataCode: string;
   name: string;
@@ -103,29 +92,37 @@ export interface CandidateAirport {
   hasMockFlightData: boolean;
 }
 
-export interface Place {
-  id: string;
-  type: PlaceType;
-  name: string;
-  displayName: string;
-  country: string;
-  aliases: PlaceAlias[];
-  airportCodes: string[];
-  iataCode: string | null;
-  isMajorHub: boolean;
+export interface Continent {
+  continentId: string;
+  continentNameZh: string;
+  continentNameEn: string;
   priority: number;
 }
 
-export interface PlaceSearchResponse {
-  results: Place[];
+export interface Country {
+  countryId: string;
+  continentId: string;
+  countryNameZh: string;
+  countryNameEn: string;
+  countryCode: string;
+  priority: number;
 }
 
-export interface ResolvedPlace {
-  placeId: string;
-  type: PlaceType;
-  displayName: string;
-  country: string;
-  airports: CandidateAirport[];
+export interface City {
+  cityId: string;
+  cityNameZh: string;
+  cityNameEn: string;
+  countryId: string;
+  airportCodes: string[];
+  priority: number;
+  enabled: boolean;
+}
+
+export interface CityCatalog {
+  version: string;
+  continents: Continent[];
+  countries: Country[];
+  cities: City[];
 }
 
 export interface Segment {

@@ -22,7 +22,7 @@ from app.models import (
     Supplier,
     SupplierCapabilities,
 )
-from app.places import place_service
+from app.cities import city_service
 from app.price_snapshots import PriceSnapshotRecorder
 from app.repositories import SearchPersistenceService
 from app.search_orchestrator import SearchOrchestrator
@@ -89,8 +89,8 @@ def _with_airport_display(itinerary: Itinerary) -> Itinerary:
         Segment(
             **{
                 **segment.model_dump(),
-                "origin_display": place_service.airport_label(segment.origin),
-                "destination_display": place_service.airport_label(segment.destination),
+                "origin_display": city_service.airport_label(segment.origin),
+                "destination_display": city_service.airport_label(segment.destination),
             }
         )
         for segment in itinerary.segments

@@ -1,78 +1,47 @@
 # SplitFare Architecture
 
-## End-to-end flow
+## Request path
 
 ```text
-LocationInput
-  → GET /api/places/search
-  → POST /api/places/resolve
-  → AirportSearchMatrix
-  → capped FlightQuery plan
-  → SupplierOrchestrator / SupplierAdapter
-  → NormalizedFlightOffer
-  → split-ticket matcher
-  → Risk Engine
-  → value/cheapest ranking
-  → SearchResponse + metadata
-  → Results UI / BookingOption
-  → canonical verification registry
+Next.js I18nProvider + CityCatalogProvider
+  → GET /api/cities
+  → structured continent/country/city selector
+  → POST /api/search (originCityId, destinationCityId)
+FastAPI CityService
+  → ResolvedCity airport sets
+  → capped AirportSearchMatrix
+  → parallel SupplierOrchestrator
+  → pure matching algorithm
+  → risk engine + value ranking
+  → booking options
   → POST /api/booking-options/verify
-  → optional HTTPS redirect
 ```
 
-## Location layer
+## Ownership boundaries
 
-`PlaceService` 是 seed catalog 的唯一来源。React 不维护地点副本。Matching 顺序为 exact IATA、exact city、alias、startsWith、contains，再按 hub/priority/type 稳定排序。
+- `backend/app/cities.py` owns continents, countries, cities, airport mappings, priorities and matrix generation.
+- Supplier adapters own raw response normalization and price verification capability.
+- Matching and risk modules are pure business logic; they do not call React, databases or external APIs.
+- Frontend dictionaries own user-facing zh/en copy. Backend sends stable error codes and business data.
+- Backend owns all authoritative price, duration, savings, risk and ranking values.
 
-City resolution 最多返回 3 个按 primary、international、priority、distance、mock coverage 排序的机场。Airport resolution 只返回自身。
+## Location contract
 
-## Airport matrix
+Only city selection exists. Airport IDs, free text, aliases and `/api/places/*` do not exist. SearchRequest rejects unknown fields and requires `city:*` IDs. CityService rejects unknown or disabled cities and resolves up to three priority airports. The matrix caps hubs at 12 and supplier queries at the configured budget.
 
-`build_search_queries` 是无 I/O 的纯函数。Baseline 为 origin airport × destination airport。每个 hub 生成 origin→hub 及 hub→destination 查询；为了支持 overnight gap，第二段可查询次日，max gap >24h 时最多查询后两日。
+## Cache and state
 
-Matrix 保证 route/date/kind/hub key 唯一，排除 origin/hub/destination 同机场组合，并按 `MAX_SUPPLIER_QUERIES_PER_SEARCH / searchable_adapter_count` 截断。Metadata 返回实际使用与被排除的 hub。
+- Supplier price TTL: mock 5 minutes, live policy 10 minutes.
+- Cache namespace: `flight:v2`.
+- Key dimensions: both city IDs, both resolved airport sets, route leg, date, passengers, cabin, min/max gap, currency and supplier mode.
+- Locale is display-only and is excluded from flight cache keys.
+- Browser state keys: `splitfare:locale:v1`, `splitfare:search:v2`; legacy key is deleted on form mount.
+- Redis failure falls back to in-process memory or direct supplier fetch.
 
-## Search orchestrator
+## Internationalization
 
-`SearchOrchestrator` 创建有总 timeout 的 route tasks。`SupplierOrchestrator` 只路由 `supports_search=true` 的 adapter，每 leg 每 supplier 最多 30 个 offers，使用 semaphore 限制总并发。Errors 会清理敏感值并稳定排序。
+`frontend/lib/i18n.tsx` contains the shared translation dictionary, persisted locale selection and stable warning mapping. `frontend/lib/format.ts` is the only money/date/time formatting layer. City names are bilingual catalog fields keyed by stable city ID. A locale change updates presentation only; the results fetch effect depends only on serialized search params.
 
-## Supplier adapter and normalizer
+## Safety
 
-`SupplierAdapter.search_one_way` 固定执行 fetch → normalize。统一模型为 `SupplierResult`、`SupplierError`、`NormalizedFlightOffer` 与 `SupplierCapabilities`。
-
-- Mock adapters：可搜索、可 mock verify、非 live。
-- Duffel：contract/skeleton；mock mode 强制禁用 live search。
-- Trip.com/Skyscanner：redirect-only capabilities，不参与 search 或 ranking。
-
-## Split-ticket engine
-
-Matcher 是 pure function。Direct A→B 成为 protected baseline；A→X 与 X→B 在机场连接、时间、gap 和 currency 合法时组成 split-ticket。
-
-Second legs 按 origin 建索引，复杂度从所有 offers 的盲目 O(n²) 降为与可连接机场 bucket 相关的组合。矩阵和 supplier query 上限构成外层复杂度保护。
-
-## Risk engine
-
-后端是 risk rule 的唯一来源。Base score、gap、overnight、cross-airport、baggage、supplier/airline、LCC、visa unknown 与 early/late 时间共同得分，clamp 到 0–100，再由统一边界映射 risk level。前端只显示分数与 warnings。
-
-## Ranking
-
-默认 value score：savings 45%、risk inverse 30%、duration 15%、convenience 10%。Extreme risk 在 value sort 中先降级；只有 `sort=cheapest` 才以价格为第一排序键。所有 tie-breakers 都稳定。
-
-## Price freshness and cache
-
-Flight cache key 包含 supplier、route、date、passengers、cabin、currency。缓存反序列化的 offer 标记为 `cached`。Redis 失败时可降级到进程内 TTL cache。Cache hit/miss/store/expired 在 DEBUG 日志记录。
-
-金额模型在后端使用 `Decimal`；JSON 输出为 number 以保持前端 contract。
-
-## Booking and verification
-
-Split itinerary 为每张 offer 生成独立 BookingOption；option price 之和等于 itinerary total。Redirect-only options 没有 price amount。
-
-SearchService 在有上限的进程内 registry 登记 `(search_id, itinerary_id, booking_option_id)`。Verification API 只接收这三个标识，从 registry 获取 canonical supplier、offer、previous price 与 URL。前端价格/URL 不被信任。多实例 production 需要在 Phase 14.6 替换为共享短 TTL registry。
-
-## Frontend/backend boundary
-
-- Frontend：地点交互、表单验证、loading/empty/error/partial states、格式化与可访问 modal。
-- Backend：地点解析、矩阵、supplier 调用、normalization、价格、风险、ranking、booking binding。
-- CamelCase JSON contract 来自 Pydantic alias；OpenAPI contract tests 检查 location request 与 verification request 字段。
-- Production response 不包含 raw stack trace 或 raw payload。
+Production CORS is an explicit allowlist. Search has rate limiting and query/concurrency caps. Supplier errors are sanitized. Credentials in booking URLs are rejected and external HTTP URLs are rejected. Raw payload is filtered unless debug is explicitly allowed outside production. Mock prices are labeled as demo and no external link is presented as confirmed inventory.

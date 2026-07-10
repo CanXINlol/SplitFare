@@ -28,39 +28,31 @@ def test_health_endpoint_exposes_deployment_shape() -> None:
     assert body["timestamp"]
 
 
-def test_place_search_api_supports_english_and_chinese_aliases() -> None:
-    english = client.get("/api/places/search", params={"q": "Melbourne"})
-    chinese = client.get("/api/places/search", params={"q": "上海"})
-    assert english.status_code == 200
-    assert chinese.status_code == 200
-    assert english.json()["results"][0]["id"] == "city:melbourne-au"
-    assert chinese.json()["results"][0]["id"] == "city:shanghai-cn"
-
-
-def test_place_resolve_api_wraps_airport_as_resolved_place() -> None:
-    response = client.post("/api/places/resolve", json={"placeId": "airport:PVG"})
+def test_city_catalog_api_exposes_the_authoritative_hierarchy() -> None:
+    response = client.get("/api/cities")
     assert response.status_code == 200
     body = response.json()
-    assert body["type"] == "airport"
-    assert [airport["iataCode"] for airport in body["airports"]] == ["PVG"]
+    assert body["version"] == "city-catalog-v1"
+    assert {item["continentId"] for item in body["continents"]} == {
+        "asia", "oceania", "europe", "north-america"
+    }
+    assert any(city["cityId"] == "city:melbourne-au" for city in body["cities"])
+    assert any(city["cityId"] == "city:shanghai-cn" for city in body["cities"])
 
 
-def test_place_search_api_supports_real_chinese_aliases() -> None:
-    response = client.get("/api/places/search", params={"q": "\u4e0a\u6d77"})
-    assert response.status_code == 200
-    assert response.json()["results"][0]["id"] == "city:shanghai-cn"
+def test_old_place_endpoints_are_removed() -> None:
+    assert client.get("/api/places/search", params={"q": "Melbourne"}).status_code == 404
+    assert client.post("/api/places/resolve", json={"placeId": "airport:PVG"}).status_code == 404
 
 
-def test_invalid_place_returns_user_friendly_404() -> None:
-    response = client.post("/api/places/resolve", json={"placeId": "place:missing"})
-    assert response.status_code == 404
-    assert "Choose a city or airport" in response.json()["error"]["message"]
-
-
-def test_place_search_rejects_oversized_queries() -> None:
-    response = client.get("/api/places/search", params={"q": "x" * 81})
+def test_invalid_city_id_returns_stable_validation_error() -> None:
+    response = client.post("/api/search", json={
+        "originCityId": "city:missing", "destinationCityId": "city:shanghai-cn",
+        "departureDate": "2026-08-12", "minGapHours": 3, "maxGapHours": 12,
+        "passengers": 1, "cabin": "economy",
+    })
     assert response.status_code == 422
-    assert response.json()["error"]["code"] == "validation_error"
+    assert response.json()["error"]["message"] == "invalid_city_id"
 
 
 def test_rate_limit_applies_to_search_endpoint(monkeypatch) -> None:
@@ -71,7 +63,7 @@ def test_rate_limit_applies_to_search_endpoint(monkeypatch) -> None:
     )
     main_module._rate_limit_hits.clear()
     payload = {
-        "originPlaceId": "airport:SYD", "destinationPlaceId": "airport:LHR",
+        "originCityId": "city:sydney-au", "destinationCityId": "city:london-gb",
         "departureDate": "2026-08-12", "minGapHours": 3, "maxGapHours": 12,
         "passengers": 1, "cabin": "economy", "candidateHubs": [],
     }
@@ -95,7 +87,7 @@ def test_production_error_response_hides_raw_exception(monkeypatch) -> None:
 
 def test_search_api_uses_camel_case_contract() -> None:
     response = client.post("/api/search", json={
-        "originPlaceId": "city:melbourne-au", "destinationPlaceId": "city:shanghai-cn", "departureDate": "2026-08-12",
+        "originCityId": "city:melbourne-au", "destinationCityId": "city:shanghai-cn", "departureDate": "2026-08-12",
         "minGapHours": 3, "maxGapHours": 12, "passengers": 1, "cabin": "economy",
     })
     assert response.status_code == 200
@@ -139,8 +131,8 @@ def test_search_api_uses_camel_case_contract() -> None:
 def test_openapi_contract_uses_location_search_and_canonical_verification_fields() -> None:
     schemas = client.get("/openapi.json").json()["components"]["schemas"]
     search_properties = schemas["SearchRequest"]["properties"]
-    assert "originPlaceId" in search_properties
-    assert "destinationPlaceId" in search_properties
+    assert "originCityId" in search_properties
+    assert "destinationCityId" in search_properties
     assert "origin" not in search_properties
     assert "destination" not in search_properties
     response_required = set(schemas["SearchResponse"]["required"])
@@ -151,7 +143,7 @@ def test_openapi_contract_uses_location_search_and_canonical_verification_fields
 
 def test_raw_payload_requires_explicit_debug_flag() -> None:
     payload = {
-        "originPlaceId": "city:melbourne-au", "destinationPlaceId": "city:shanghai-cn", "departureDate": "2026-08-12",
+        "originCityId": "city:melbourne-au", "destinationCityId": "city:shanghai-cn", "departureDate": "2026-08-12",
         "minGapHours": 3, "maxGapHours": 12, "passengers": 1, "cabin": "economy",
     }
     regular = client.post("/api/search", json=payload).json()
@@ -163,7 +155,7 @@ def test_raw_payload_requires_explicit_debug_flag() -> None:
 def test_production_never_exposes_raw_payload_even_with_debug_flag(monkeypatch) -> None:
     monkeypatch.setattr(main_module, "settings", replace(main_module.settings, app_env="production"))
     response = client.post("/api/search?debug=true", json={
-        "originPlaceId": "airport:MEL", "destinationPlaceId": "airport:PVG",
+        "originCityId": "city:melbourne-au", "destinationCityId": "city:shanghai-cn",
         "departureDate": "2026-08-12", "minGapHours": 3, "maxGapHours": 12,
         "passengers": 1, "cabin": "economy", "candidateHubs": [],
     })
@@ -173,7 +165,7 @@ def test_production_never_exposes_raw_payload_even_with_debug_flag(monkeypatch) 
 
 def test_no_results_returns_200_with_empty_arrays_and_explanation() -> None:
     response = client.post("/api/search", json={
-        "originPlaceId": "airport:SYD", "destinationPlaceId": "airport:LHR", "departureDate": "2026-08-12",
+        "originCityId": "city:sydney-au", "destinationCityId": "city:london-gb", "departureDate": "2026-08-12",
         "minGapHours": 3, "maxGapHours": 12, "passengers": 1, "cabin": "economy",
         "candidateHubs": [],
     })
@@ -230,7 +222,7 @@ def _booking_option(search_response, offer_fragment: str):
 
 def _search_response():
     return client.post("/api/search", json={
-        "originPlaceId": "city:melbourne-au", "destinationPlaceId": "city:shanghai-cn",
+        "originCityId": "city:melbourne-au", "destinationCityId": "city:shanghai-cn",
         "departureDate": "2026-08-12", "minGapHours": 3, "maxGapHours": 12,
         "passengers": 1, "cabin": "economy",
     }).json()
@@ -238,7 +230,7 @@ def _search_response():
 
 def test_pre_booking_verification_uses_canonical_option_and_records_events() -> None:
     search_body = {
-        "originPlaceId": "city:melbourne-au", "destinationPlaceId": "city:shanghai-cn", "departureDate": "2026-08-12",
+        "originCityId": "city:melbourne-au", "destinationCityId": "city:shanghai-cn", "departureDate": "2026-08-12",
         "minGapHours": 3, "maxGapHours": 12, "passengers": 1, "cabin": "economy",
     }
     search_response = client.post("/api/search", json=search_body).json()

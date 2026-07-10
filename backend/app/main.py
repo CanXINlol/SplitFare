@@ -6,7 +6,7 @@ from decimal import Decimal
 from typing import Any
 from uuid import uuid4
 
-from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -21,19 +21,17 @@ from app.cache import RedisCache
 from app.config import Settings, load_settings
 from app.db import SessionLocal, init_database
 from app.models import (
-    PlaceSearchResponse,
+    CityCatalog,
     PreBookingVerificationRequest,
     PreBookingVerificationResponse,
     PriceStatus,
-    ResolvePlaceRequest,
-    ResolvedPlace,
     SearchRequest,
     SearchResponse,
     VerificationStatus,
     VerifyPriceResult,
 )
 from app.models import Supplier
-from app.places import place_service
+from app.cities import city_service
 from app.repositories import SearchPersistenceService
 from app.search import SearchService
 from app.search_orchestrator import SearchOrchestrator
@@ -207,17 +205,9 @@ def health() -> dict[str, str]:
     }
 
 
-@app.get("/api/places/search", response_model=PlaceSearchResponse)
-def search_places(q: str = Query(min_length=1, max_length=80)) -> PlaceSearchResponse:
-    return PlaceSearchResponse(results=place_service.search(q))
-
-
-@app.post("/api/places/resolve", response_model=ResolvedPlace)
-def resolve_place(request: ResolvePlaceRequest) -> ResolvedPlace:
-    try:
-        return place_service.resolve(request.place_id)
-    except ValueError as error:
-        raise HTTPException(status_code=404, detail=str(error)) from error
+@app.get("/api/cities", response_model=CityCatalog)
+def city_catalog() -> CityCatalog:
+    return city_service.catalog()
 
 
 @app.post("/api/search", response_model=SearchResponse)
@@ -228,7 +218,8 @@ async def search(request: SearchRequest, debug: bool = False) -> JSONResponse:
         allow_debug = debug and not settings.is_production
         return JSONResponse(payload if allow_debug else remove_raw_payload(payload))
     except ValueError as error:
-        raise HTTPException(status_code=404, detail=str(error)) from error
+        code = str(error) if str(error) in {"invalid_city_id", "city_has_no_airports"} else "search_invalid"
+        raise HTTPException(status_code=422, detail=code) from error
 
 
 @app.post("/api/offers/{supplier}/{offer_id}/verify", response_model=VerifyPriceResult)

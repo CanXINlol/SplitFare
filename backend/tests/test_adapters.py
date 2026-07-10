@@ -28,7 +28,7 @@ DEPARTURE_DATE = date(2026, 8, 12)
 
 def search_request() -> SearchRequest:
     return SearchRequest(
-        originPlaceId="airport:MEL", destinationPlaceId="airport:PVG", departureDate=DEPARTURE_DATE,
+        originCityId="city:melbourne-au", destinationCityId="city:shanghai-cn", departureDate=DEPARTURE_DATE,
         minGapHours=3, maxGapHours=12, passengers=1, cabin="economy",
     )
 

@@ -117,15 +117,15 @@ def test_price_verification_never_confirms_expired_or_unavailable_price() -> Non
         )
 
 
-def test_search_request_normalizes_airport_place_ids_and_validates_gap() -> None:
+def test_search_request_normalizes_city_ids_and_validates_gap() -> None:
     request = SearchRequest(
-        originPlaceId=" airport:mel ", destinationPlaceId="airport:pvg", departureDate="2026-08-12",
+        originCityId=" CITY:MELBOURNE-AU ", destinationCityId="city:shanghai-cn", departureDate="2026-08-12",
         minGapHours=3, maxGapHours=12, passengers=1, cabin="economy",
     )
-    assert (request.origin_place_id, request.destination_place_id) == ("airport:MEL", "airport:PVG")
+    assert (request.origin_city_id, request.destination_city_id) == ("city:melbourne-au", "city:shanghai-cn")
     with pytest.raises(ValidationError, match="max_gap_hours"):
         SearchRequest(
-            originPlaceId="airport:MEL", destinationPlaceId="airport:PVG", departureDate="2026-08-12",
+            originCityId="city:melbourne-au", destinationCityId="city:shanghai-cn", departureDate="2026-08-12",
             minGapHours=10, maxGapHours=3, passengers=1, cabin="economy",
         )
 
@@ -140,7 +140,7 @@ def test_search_request_rejects_legacy_free_text_fields() -> None:
 
 def test_all_mock_data_is_normalized() -> None:
     request = SearchRequest(
-        originPlaceId="airport:MEL", destinationPlaceId="airport:PVG", departureDate="2026-08-12",
+        originCityId="city:melbourne-au", destinationCityId="city:shanghai-cn", departureDate="2026-08-12",
         minGapHours=3, maxGapHours=12, passengers=1, cabin="economy",
     )
     offers = MockFlightSupplier().search(request)

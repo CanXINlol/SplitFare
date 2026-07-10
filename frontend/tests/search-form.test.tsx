@@ -1,67 +1,73 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { AppShell } from "@/components/app-shell";
 import { SearchForm } from "@/components/search-form";
-import { searchPlaces } from "@/lib/api";
-import { PlaceType, type Place } from "@/lib/types";
+import { CityCatalogProvider } from "@/lib/city-catalog";
+import { I18nProvider } from "@/lib/i18n";
+import { getCityCatalog } from "@/lib/api";
+import type { CityCatalog } from "@/lib/types";
 
 const push = vi.fn();
-
 vi.mock("next/navigation", () => ({ useRouter: () => ({ push }) }));
-vi.mock("@/lib/api", () => ({ searchPlaces: vi.fn() }));
+vi.mock("@/lib/api", () => ({ getCityCatalog: vi.fn() }));
 
-const places: Place[] = [
-  {
-    id: "airport:MEL", type: PlaceType.Airport, name: "Melbourne Airport",
-    displayName: "Melbourne Airport (MEL)", country: "Australia", aliases: [],
-    airportCodes: ["MEL"], iataCode: "MEL", isMajorHub: true, priority: 1,
-  },
-  {
-    id: "city:melbourne-au", type: PlaceType.City, name: "Melbourne",
-    displayName: "Melbourne, Australia", country: "Australia", aliases: [{ value: "墨尔本", locale: null }],
-    airportCodes: ["MEL", "AVV"], iataCode: null, isMajorHub: true, priority: 1,
-  },
-  {
-    id: "airport:AVV", type: PlaceType.Airport, name: "Avalon Airport",
-    displayName: "Avalon Airport (AVV)", country: "Australia", aliases: [],
-    airportCodes: ["AVV"], iataCode: "AVV", isMajorHub: false, priority: 4,
-  },
-];
+const catalog: CityCatalog = {
+  version: "city-catalog-v1",
+  continents: [
+    { continentId: "asia", continentNameZh: "亚洲", continentNameEn: "Asia", priority: 1 },
+    { continentId: "oceania", continentNameZh: "大洋洲", continentNameEn: "Oceania", priority: 2 },
+  ],
+  countries: [
+    { countryId: "china", continentId: "asia", countryNameZh: "中国", countryNameEn: "China", countryCode: "CN", priority: 1 },
+    { countryId: "australia", continentId: "oceania", countryNameZh: "澳大利亚", countryNameEn: "Australia", countryCode: "AU", priority: 1 },
+  ],
+  cities: [
+    { cityId: "city:shanghai-cn", cityNameZh: "上海", cityNameEn: "Shanghai", countryId: "china", airportCodes: ["PVG", "SHA"], priority: 1, enabled: true },
+    { cityId: "city:beijing-cn", cityNameZh: "北京", cityNameEn: "Beijing", countryId: "china", airportCodes: ["PEK", "PKX"], priority: 2, enabled: true },
+    { cityId: "city:melbourne-au", cityNameZh: "墨尔本", cityNameEn: "Melbourne", countryId: "australia", airportCodes: ["MEL", "AVV"], priority: 1, enabled: true },
+  ],
+};
 
-describe("SearchForm location autocomplete", () => {
-  beforeEach(() => {
-    push.mockReset();
-    vi.mocked(searchPlaces).mockReset();
+function renderForm(shell = false) {
+  return render(<I18nProvider><CityCatalogProvider>{shell ? <AppShell><SearchForm /></AppShell> : <SearchForm />}</CityCatalogProvider></I18nProvider>);
+}
+
+describe("structured city search", () => {
+  beforeEach(() => { push.mockReset(); vi.mocked(getCityCatalog).mockResolvedValue(catalog); window.sessionStorage.clear(); window.localStorage.clear(); });
+
+  it("contains no free-text location or IATA input", async () => {
+    renderForm();
+    await screen.findByRole("button", { name: /From: Melbourne/i });
+    expect(screen.queryByRole("combobox", { name: /from/i })).not.toBeInTheDocument();
+    expect(document.querySelector('input[name="originCityId"]')).toHaveValue("city:melbourne-au");
   });
 
-  it("shows related MEL results and supports Enter selection", async () => {
-    vi.mocked(searchPlaces).mockResolvedValue({ results: places });
-    render(<SearchForm />);
-    const input = screen.getByRole("combobox", { name: "From" });
-    fireEvent.change(input, { target: { value: "mel" } });
-
-    await waitFor(() => expect(searchPlaces).toHaveBeenCalledWith("mel", expect.any(AbortSignal)));
-    expect(await screen.findByRole("option", { name: /Melbourne Airport/ })).toBeVisible();
-    expect(screen.getByRole("option", { name: /Melbourne, Australia/ })).toBeVisible();
-    expect(screen.getByRole("option", { name: /Avalon Airport/ })).toBeVisible();
-
-    fireEvent.keyDown(input, { key: "Enter" });
-    expect(input).toHaveValue("Melbourne Airport (MEL)");
-    expect(document.querySelector<HTMLInputElement>('input[name="originPlaceId"]')).toHaveValue("airport:MEL");
+  it("selects a city through continent country and city hierarchy", async () => {
+    renderForm();
+    fireEvent.click(await screen.findByRole("button", { name: /To: Shanghai/i }));
+    fireEvent.click(screen.getByRole("button", { name: /Beijing/ }));
+    expect(document.querySelector('input[name="destinationCityId"]')).toHaveValue("city:beijing-cn");
   });
 
-  it("selects a Chinese city alias as a stable city place id", async () => {
-    vi.mocked(searchPlaces).mockResolvedValue({ results: [places[1]] });
-    render(<SearchForm />);
-    const input = screen.getByRole("combobox", { name: "From" });
-    fireEvent.change(input, { target: { value: "墨尔本" } });
-    fireEvent.click(await screen.findByRole("option", { name: /Melbourne, Australia/ }));
-    expect(document.querySelector<HTMLInputElement>('input[name="originPlaceId"]')).toHaveValue("city:melbourne-au");
+  it("keeps selected city ids when language changes", async () => {
+    renderForm(true);
+    await screen.findByRole("button", { name: /From: Melbourne/i });
+    fireEvent.click(screen.getByRole("button", { name: "Switch language" }));
+    expect(await screen.findByRole("button", { name: /出发城市: 墨尔本/ })).toBeVisible();
+    expect(document.querySelector('input[name="originCityId"]')).toHaveValue("city:melbourne-au");
   });
 
-  it("renders a non-blocking lookup error", async () => {
-    vi.mocked(searchPlaces).mockRejectedValue(new Error("API unavailable"));
-    render(<SearchForm />);
-    fireEvent.change(screen.getByRole("combobox", { name: "From" }), { target: { value: "mel" } });
-    expect(await screen.findByText("API unavailable")).toBeVisible();
+  it("submits city ids and versioned browser state", async () => {
+    renderForm();
+    fireEvent.click(await screen.findByRole("button", { name: /Compare itineraries/ }));
+    await waitFor(() => expect(push).toHaveBeenCalled());
+    expect(push.mock.calls[0][0]).toContain("originCityId=city%3Amelbourne-au");
+    expect(window.sessionStorage.getItem("splitfare:search:v2")).toContain("city:shanghai-cn");
+  });
+
+  it("removes the legacy search-state key", async () => {
+    window.sessionStorage.setItem("splitfare:last-search", "legacy");
+    renderForm();
+    await waitFor(() => expect(window.sessionStorage.getItem("splitfare:last-search")).toBeNull());
   });
 });

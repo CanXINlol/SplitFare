@@ -1,22 +1,18 @@
 import type { Metadata } from "next";
-import Link from "next/link";
 import "./globals.css";
+import { AppShell } from "@/components/app-shell";
+import { CityCatalogProvider } from "@/lib/city-catalog";
+import { I18nProvider } from "@/lib/i18n";
 
 export const metadata: Metadata = {
-  title: "SplitFare - Mock flight combinations",
-  description: "Compare protected and self-transfer itineraries using fictional mock data.",
+  title: "SplitFare — protected fares vs self-transfer",
+  description: "Compare protected and self-transfer flight combinations with transparent risk.",
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
     <html lang="en">
-      <body>
-        <header className="mx-auto flex max-w-6xl items-center justify-between px-5 py-6">
-          <Link href="/" className="text-xl font-black tracking-tight">SplitFare<span className="text-coral">.</span></Link>
-          <span className="rounded-full bg-white/70 px-3 py-1 text-xs font-bold uppercase tracking-widest">Mock demo</span>
-        </header>
-        {children}
-      </body>
+      <body><I18nProvider><CityCatalogProvider><AppShell>{children}</AppShell></CityCatalogProvider></I18nProvider></body>
     </html>
   );
 }

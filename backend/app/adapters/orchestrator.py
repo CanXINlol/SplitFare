@@ -1,5 +1,6 @@
 import asyncio
 import re
+import threading
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
 
@@ -13,6 +14,7 @@ from app.models import (
     PriceStatus,
     SearchError,
     SearchRequest,
+    SearchCacheContext,
     Supplier,
     SupplierError,
     SupplierFailure,
@@ -72,17 +74,20 @@ class SupplierOrchestrator:
         self.max_offers_per_supplier_leg = max_offers_per_supplier_leg
         self.cache = cache
         self.max_concurrent_requests = max(1, max_concurrent_requests)
-        self._semaphore = asyncio.Semaphore(self.max_concurrent_requests)
+        # TestClient and production workers may execute requests on different event loops.
+        # A process-local threading semaphore safely limits the blocking supplier calls
+        # without becoming bound to the first asyncio loop that uses this service.
+        self._semaphore = threading.BoundedSemaphore(self.max_concurrent_requests)
 
     @property
     def searchable_adapters(self) -> tuple[SupplierAdapter, ...]:
         return tuple(adapter for adapter in self.adapters if adapter.capabilities.supports_search)
 
     def search(self, request: SearchRequest) -> SupplierSearchOutcome:
-        from app.places import place_service
+        from app.cities import city_service
 
-        origin = place_service.resolve(request.origin_place_id).airports[0].iata_code
-        destination = place_service.resolve(request.destination_place_id).airports[0].iata_code
+        origin = city_service.resolve(request.origin_city_id).airports[0].iata_code
+        destination = city_service.resolve(request.destination_city_id).airports[0].iata_code
         offers: list[NormalizedFlightOffer] = []
         failures: list[SupplierFailure] = []
         supplier_results: list[SupplierResult] = []
@@ -147,6 +152,7 @@ class SupplierOrchestrator:
         passengers: int,
         cabin: Cabin,
         currency: str,
+        context: SearchCacheContext,
     ) -> RouteSearchResult:
         try:
             key = flight_cache_key(
@@ -157,18 +163,26 @@ class SupplierOrchestrator:
                 passengers,
                 cabin,
                 currency,
+                origin_city_id=context.origin_city_id,
+                destination_city_id=context.destination_city_id,
+                resolved_origin_airports=context.resolved_origin_airports,
+                resolved_destination_airports=context.resolved_destination_airports,
+                min_gap_hours=context.min_gap_hours,
+                max_gap_hours=context.max_gap_hours,
+                supplier_mode=context.supplier_mode,
             )
             policy = adapter.cache_policy
 
             def fetch() -> list[NormalizedFlightOffer]:
-                return adapter.search_one_way(
-                    origin,
-                    destination,
-                    departure_date,
-                    passengers,
-                    cabin,
-                    currency,
-                )
+                with self._semaphore:
+                    return adapter.search_one_way(
+                        origin,
+                        destination,
+                        departure_date,
+                        passengers,
+                        cabin,
+                        currency,
+                    )
 
             def serialize(offers: list[NormalizedFlightOffer]) -> list[dict[str, object]]:
                 return [offer.model_dump(mode="json") for offer in offers]
@@ -183,19 +197,18 @@ class SupplierOrchestrator:
                     for item in payload
                 ]
 
-            async with self._semaphore:
-                normalized = await asyncio.wait_for(
-                    asyncio.to_thread(
-                        self.cache.get_or_fetch,
-                        key,
-                        fetch,
-                        policy.ttl_seconds,
-                        serialize=serialize,
-                        deserialize=deserialize,
-                        enabled=policy.can_store,
-                    ) if self.cache and policy.can_store else asyncio.to_thread(fetch),
-                    timeout=self.supplier_timeout_seconds,
-                )
+            normalized = await asyncio.wait_for(
+                asyncio.to_thread(
+                    self.cache.get_or_fetch,
+                    key,
+                    fetch,
+                    policy.ttl_seconds,
+                    serialize=serialize,
+                    deserialize=deserialize,
+                    enabled=policy.can_store,
+                ) if self.cache and policy.can_store else asyncio.to_thread(fetch),
+                timeout=self.supplier_timeout_seconds,
+            )
             if not all(isinstance(offer, NormalizedFlightOffer) for offer in normalized):
                 raise TypeError("Adapter returned data that was not normalized.")
             if any(offer.supplier != adapter.name for offer in normalized):
@@ -260,10 +273,11 @@ class SupplierOrchestrator:
         passengers: int,
         cabin: Cabin,
         currency: str,
+        context: SearchCacheContext,
     ) -> RouteSearchResult:
         results = await asyncio.gather(*(
             self._query_adapter(
-                adapter, origin, destination, departure_date, passengers, cabin, currency
+                adapter, origin, destination, departure_date, passengers, cabin, currency, context
             )
             for adapter in self.searchable_adapters
         ))

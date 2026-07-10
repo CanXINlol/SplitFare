@@ -202,10 +202,10 @@ class MockFlightSupplier:
     """Phase 0 compatibility facade. New code should use SupplierOrchestrator."""
 
     def search(self, request: SearchRequest) -> list[NormalizedFlightOffer]:
-        from app.places import place_service
+        from app.cities import city_service
 
-        origin = place_service.resolve(request.origin_place_id).airports[0].iata_code
-        destination = place_service.resolve(request.destination_place_id).airports[0].iata_code
+        origin = city_service.resolve(request.origin_city_id).airports[0].iata_code
+        destination = city_service.resolve(request.destination_city_id).airports[0].iata_code
         offers: list[NormalizedFlightOffer] = []
         for supplier in (Supplier.mock_sky, Supplier.demo_air, Supplier.budget_demo):
             offers.extend(MockSupplierAdapter(supplier).search_one_way(

@@ -30,8 +30,8 @@ def session_factory() -> sessionmaker[Session]:
 
 def request() -> SearchRequest:
     return SearchRequest(
-        originPlaceId="airport:MEL",
-        destinationPlaceId="airport:PVG",
+        originCityId="city:melbourne-au",
+        destinationCityId="city:shanghai-cn",
         departureDate=date(2026, 8, 12),
         minGapHours=3,
         maxGapHours=12,

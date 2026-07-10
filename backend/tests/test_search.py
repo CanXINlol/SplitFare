@@ -10,7 +10,7 @@ from app.search_orchestrator import SearchOrchestrator
 
 def request(min_gap: float = 3, max_gap: float = 12) -> SearchRequest:
     return SearchRequest(
-        originPlaceId="airport:MEL", destinationPlaceId="airport:PVG", departureDate=date(2026, 8, 12),
+        originCityId="city:melbourne-au", destinationCityId="city:shanghai-cn", departureDate=date(2026, 8, 12),
         minGapHours=min_gap, maxGapHours=max_gap, passengers=1, cabin="economy",
     )
 

@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ItineraryCard } from "@/components/itinerary-card";
 import { verifyBookingOption } from "@/lib/api";
 import { BookingOptionType, Cabin, ItineraryType, PriceStatus, RiskLevel, Supplier, VerificationStatus, type Itinerary, type Segment } from "@/lib/types";
+import { I18nProvider } from "@/lib/i18n";
 
 vi.mock("@/lib/api", () => ({ verifyBookingOption: vi.fn() }));
 
@@ -30,13 +31,13 @@ describe("ItineraryCard", () => {
   beforeEach(() => vi.mocked(verifyBookingOption).mockReset());
 
   it("shows required price, savings, risk, gap, duration and warning", () => {
-    render(<ItineraryCard itinerary={itinerary} />);
+    render(<I18nProvider><ItineraryCard itinerary={itinerary} searchId="search-1" originCity="Melbourne" destinationCity="Shanghai" /></I18nProvider>);
     expect(screen.getByText("$720")).toBeInTheDocument();
     expect(screen.getByText(/Save \$400/)).toBeInTheDocument();
-    expect(screen.getByText(/medium risk/i)).toBeInTheDocument();
-    expect(screen.getByText("4h at BKK")).toBeInTheDocument();
+    expect(screen.getByText(/Medium · 45/i)).toBeInTheDocument();
+    expect(screen.getByText("BKK · 4h 0m")).toBeInTheDocument();
     expect(screen.getByText("18h 20m")).toBeInTheDocument();
-    expect(screen.getByText(/second ticket may not be protected/i)).toBeInTheDocument();
+    expect(screen.getByText(/delay on the first ticket may not protect/i)).toBeInTheDocument();
   });
 
   it("verifies only the canonical booking option identifiers", async () => {
@@ -47,14 +48,14 @@ describe("ItineraryCard", () => {
       message: "Verified against deterministic mock data.", canContinue: false,
       requiresPriceCheck: false,
     });
-    render(<ItineraryCard itinerary={itinerary} searchId="search-1" demoData />);
+    render(<I18nProvider><ItineraryCard itinerary={itinerary} searchId="search-1" originCity="Melbourne" destinationCity="Shanghai" /></I18nProvider>);
     fireEvent.click(screen.getByRole("button", { name: "Verify demo price" }));
     await waitFor(() => expect(verifyBookingOption).toHaveBeenCalledWith({
       searchId: "search-1",
       itineraryId: "one-two",
       bookingOptionId: "one-two:supplier:1:offer-one",
     }));
-    expect(await screen.findByRole("dialog", { name: /review before leaving SplitFare/i })).toBeVisible();
-    expect(screen.getByText(/Current verified price/)).toBeVisible();
+    expect(await screen.findByRole("dialog", { name: /Check before continuing/i })).toBeVisible();
+    expect(screen.getByText(/No demo price change/)).toBeVisible();
   });
 });

@@ -8,9 +8,9 @@ from app.adapters.orchestrator import (
     SupplierOrchestrator,
     sanitize_error_message,
 )
-from app.cache import CANDIDATE_HUBS_TTL_SECONDS, RedisCache, candidate_hubs_cache_key
-from app.models import AirportSearchMatrix, FlightQuery, NormalizedFlightOffer, SearchError, SearchRequest
-from app.places import place_service
+from app.cache import RedisCache
+from app.cities import city_service
+from app.models import AirportSearchMatrix, FlightQuery, NormalizedFlightOffer, SearchCacheContext, SearchError, SearchRequest
 
 
 DEFAULT_CANDIDATE_HUBS = (
@@ -44,7 +44,7 @@ def generate_candidate_hubs(request: SearchRequest) -> tuple[str, ...]:
 
 
 def generate_query_plan(request: SearchRequest) -> tuple[FlightQuery, ...]:
-    matrix = place_service.build_matrix(request, generate_candidate_hubs(request))
+    matrix = city_service.build_matrix(request, generate_candidate_hubs(request))
     return tuple(matrix.query_plan)
 
 
@@ -61,30 +61,27 @@ class SearchOrchestrator:
         self.cache = cache
         self.max_supplier_queries_per_search = max(1, max_supplier_queries_per_search)
 
-    def _cached_candidate_hubs(self, request: SearchRequest) -> tuple[str, ...]:
-        if self.cache is None or request.candidate_hubs is not None:
-            return generate_candidate_hubs(request)
-        key = candidate_hubs_cache_key(request.origin_place_id, request.destination_place_id)
-        return self.cache.get_or_fetch(
-            key,
-            lambda: generate_candidate_hubs(request),
-            CANDIDATE_HUBS_TTL_SECONDS,
-            serialize=lambda hubs: list(hubs),
-            deserialize=lambda payload: tuple(str(item) for item in payload),
-        )
-
     def _matrix(self, request: SearchRequest) -> AirportSearchMatrix:
         supplier_count = max(1, len(self.supplier_orchestrator.searchable_adapters))
         max_route_queries = max(1, self.max_supplier_queries_per_search // supplier_count)
-        return place_service.build_matrix(
+        return city_service.build_matrix(
             request,
-            self._cached_candidate_hubs(request),
+            generate_candidate_hubs(request),
             max_route_queries=max_route_queries,
         )
 
     async def _run_query(
-        self, query: FlightQuery, request: SearchRequest
+        self, query: FlightQuery, request: SearchRequest, matrix: AirportSearchMatrix
     ) -> RouteSearchResult:
+        context = SearchCacheContext(
+            origin_city_id=request.origin_city_id,
+            destination_city_id=request.destination_city_id,
+            resolved_origin_airports=[item.iata_code for item in matrix.origin_airports],
+            resolved_destination_airports=[item.iata_code for item in matrix.destination_airports],
+            min_gap_hours=request.min_gap_hours,
+            max_gap_hours=request.max_gap_hours,
+            supplier_mode="mock" if any(adapter.name.value.startswith(("Mock", "Demo", "Budget")) for adapter in self.supplier_orchestrator.searchable_adapters) else "live",
+        )
         return await self.supplier_orchestrator.search_route(
             query.origin,
             query.destination,
@@ -92,13 +89,14 @@ class SearchOrchestrator:
             request.passengers,
             request.cabin,
             request.currency,
+            context,
         )
 
     async def collect_offers(self, request: SearchRequest) -> OrchestratedOffers:
         matrix = self._matrix(request)
         plan = tuple(matrix.query_plan)
         task_to_query = {
-            asyncio.create_task(self._run_query(query, request)): query
+            asyncio.create_task(self._run_query(query, request, matrix)): query
             for query in plan
         }
         done, pending = await asyncio.wait(

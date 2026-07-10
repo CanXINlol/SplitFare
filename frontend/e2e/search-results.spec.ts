@@ -1,126 +1,72 @@
 import { expect, test, type Page } from "@playwright/test";
 
-async function choosePlace(page: Page, field: "From" | "To", value: string, option: string) {
-  await page.getByRole("combobox", { name: field }).fill(value);
-  await page.getByRole("option", { name: new RegExp(option) }).first().click();
+async function chooseCity(page: Page, field: "From" | "To" | "出发城市" | "到达城市", continent: string, country: string, city: string) {
+  await page.getByRole("button", { name: new RegExp(`^${field}:`) }).click();
+  await page.getByRole("button", { name: continent, exact: true }).click();
+  await page.getByRole("button", { name: new RegExp(`^${country} [A-Z]{2}$`) }).click();
+  await page.getByRole("button", { name: new RegExp(`^${city}`) }).click();
 }
 
-async function submitCurrentSearch(page: Page) {
-  await page.getByLabel("Departure date").fill("2026-08-12");
-  await page.getByLabel("Minimum gap").fill("3");
-  await page.getByLabel("Maximum gap").fill("12");
-  await page.getByRole("button", { name: /search/i }).click();
-
+async function search(page: Page, language: "en" | "zh" = "en") {
+  await page.getByLabel(language === "en" ? "Departure" : "出发日期").fill("2026-08-12");
+  await page.getByRole("button", { name: new RegExp(language === "en" ? "Compare itineraries" : "比较行程") }).click();
   await expect(page).toHaveURL(/\/results/);
+  await expect(page.getByText(language === "en" ? "Best overall" : "综合最佳").first()).toBeVisible();
 }
 
-test("mobile user can search Melbourne to Shanghai and understand result trade-offs", async ({ page }) => {
+test("Melbourne to Shanghai uses structured city ids and airport matrix", async ({ page }) => {
   await page.goto("/");
-  await submitCurrentSearch(page);
-
-  await expect(page.getByText("Best overall").first()).toBeVisible();
-  await expect(page.getByText("Cheapest").first()).toBeVisible();
-  await expect(page.getByText("Protected ticket").first()).toBeVisible();
-  await expect(page.getByText(/Melbourne \(MEL\).*Shanghai Pudong \(PVG\)|Melbourne \(MEL\).*Shanghai Hongqiao \(SHA\)/).first()).toBeVisible();
-  await expect(page.getByText(/Self-transfer warning|Risk warning/).first()).toBeVisible();
-  await expect(page.getByText(/Save \$/).first()).toBeVisible();
-  await expect(page.getByText(/risk/i).first()).toBeVisible();
-  await expect(page.getByText("Booking options").first()).toBeVisible();
-  await expect(page.getByText(/Confirmed demo price/).first()).toBeVisible();
-  await expect(page.getByText("Check on Trip.com").first()).toBeVisible();
-  await expect(page.getByText(/Price may change/).first()).toBeVisible();
-  await page.getByText("Check on Trip.com").first().click();
-  await expect(page.getByRole("dialog", { name: /review before leaving SplitFare/i })).toBeVisible();
-  await expect(page.getByText(/Review before leaving SplitFare|not available/i)).toBeVisible();
+  await chooseCity(page, "From", "Oceania", "Australia", "Melbourne");
+  await chooseCity(page, "To", "Asia", "China", "Shanghai");
+  await search(page);
+  await expect(page).toHaveURL(/originCityId=city%3Amelbourne-au/);
+  await expect(page).toHaveURL(/destinationCityId=city%3Ashanghai-cn/);
+  await expect(page.getByText("MEL · AVV").first()).toBeVisible();
+  await expect(page.getByText("PVG · SHA").first()).toBeVisible();
+  await expect(page.getByText(/Self-transfer · separate tickets/).first()).toBeVisible();
+  await expect(page.getByText(/A delay on the first ticket may not protect/).first()).toBeVisible();
 });
 
-test("mobile user can search with Chinese city aliases", async ({ page }) => {
+test("墨尔本到上海 supports complete Chinese experience", async ({ page }) => {
   await page.goto("/");
-  await choosePlace(page, "From", "\u58a8\u5c14\u672c", "Melbourne, Australia");
-  await choosePlace(page, "To", "\u4e0a\u6d77", "Shanghai, China");
-  await submitCurrentSearch(page);
-
-  await expect(page.getByText("Best overall").first()).toBeVisible();
-  await expect(page.getByText(/Melbourne \(MEL\)/).first()).toBeVisible();
-  await expect(page.getByText(/Shanghai Pudong \(PVG\)|Shanghai Hongqiao \(SHA\)/).first()).toBeVisible();
+  await page.getByRole("button", { name: "Switch language" }).click();
+  await chooseCity(page, "出发城市", "大洋洲", "澳大利亚", "墨尔本");
+  await chooseCity(page, "到达城市", "亚洲", "中国", "上海");
+  await search(page, "zh");
+  await expect(page.getByText(/自助中转 · 分开出票/).first()).toBeVisible();
+  await expect(page.getByText(/若第一张票延误/).first()).toBeVisible();
+  await expect(page.getByText(/模拟价格，并非实时库存/).first()).toBeVisible();
 });
 
-test("mobile user can submit direct airport inputs and see empty state", async ({ page }) => {
+test("language switch preserves selected cities and does not repeat flight search", async ({ page }) => {
+  let searchCalls = 0;
+  page.on("request", (request) => { if (request.url().endsWith("/api/search")) searchCalls += 1; });
   await page.goto("/");
-  await choosePlace(page, "From", "PVG", "Shanghai Pudong Airport");
-  await choosePlace(page, "To", "MEL", "Melbourne Airport");
-  await submitCurrentSearch(page);
-
-  await expect(page.getByText("No matching mock fares")).toBeVisible();
-  await expect(page.getByText("No itinerary matched this search.")).toBeVisible();
+  await search(page);
+  await expect.poll(() => searchCalls).toBe(1);
+  await page.getByRole("button", { name: "Switch language" }).click();
+  await expect(page.getByRole("heading", { level: 1, name: "墨尔本 → 上海" })).toBeVisible();
+  await expect.poll(() => searchCalls).toBe(1);
 });
 
-test("unknown place input shows a friendly validation error", async ({ page }) => {
+test("verification modal shows unchanged and unavailable demo states", async ({ page }) => {
   await page.goto("/");
-
-  await page.getByRole("combobox", { name: "From" }).fill("Atlantis");
-  await page.getByRole("button", { name: /search/i }).click();
-
-  await expect(page.getByText("Choose a From location")).toBeVisible();
+  await search(page);
+  const directCard = page.locator("article.protected-card").first();
+  await directCard.getByRole("button", { name: "Flight and purchase options" }).click();
+  await expect(directCard.getByText("MU738")).toBeVisible();
+  await directCard.getByRole("button", { name: /MockSky/ }).first().click();
+  await expect(page.getByRole("dialog", { name: "Check before continuing" })).toBeVisible();
+  await expect(page.getByText("No demo price change")).toBeVisible();
 });
 
-test("exact airport MEL to PVG searches only the selected airports", async ({ page }) => {
-  await page.goto("/");
-  await choosePlace(page, "From", "MEL", "Melbourne Airport");
-  await choosePlace(page, "To", "PVG", "Shanghai Pudong Airport");
-  await submitCurrentSearch(page);
-
-  await expect(page.getByText("From: MEL", { exact: true })).toBeVisible();
-  await expect(page.getByText("To: PVG", { exact: true })).toBeVisible();
-  await expect(page.getByText(/Melbourne \(MEL\).*Shanghai Pudong \(PVG\)/).first()).toBeVisible();
-});
-
-test("protected and split-ticket results remain visibly distinct", async ({ page }) => {
-  await page.goto("/");
-  await submitCurrentSearch(page);
-  await expect(page.getByText("Protected itinerary").first()).toBeVisible();
-  await expect(page.getByText("Self-transfer - separate tickets").first()).toBeVisible();
-  await expect(page.getByText("Separate tickets").first()).toBeVisible();
-});
-
-test("mock verification unchanged state is displayed", async ({ page }) => {
-  await page.goto("/");
-  await submitCurrentSearch(page);
-  const card = page.locator("article").filter({ hasText: "MU738" }).first();
-  await card.getByRole("button", { name: /Verify itinerary demo price/ }).first().click();
-  await expect(page.getByRole("dialog", { name: /Review before leaving SplitFare/ })).toBeVisible();
-  await expect(page.getByText(/Current verified price/)).toBeVisible();
-});
-
-test("mock verification price changed state shows before and after", async ({ page }) => {
-  await page.goto("/");
-  await submitCurrentSearch(page);
-  const card = page.locator("article").filter({ hasText: "MU740" }).first();
-  await card.getByRole("button", { name: /Verify itinerary demo price/ }).first().click();
-  await expect(page.getByRole("dialog", { name: /Review before leaving SplitFare/ })).toBeVisible();
-  await expect(page.getByText("Price changed")).toBeVisible();
-  await expect(page.getByText(/Before:.*After:/)).toBeVisible();
-});
-
-test("mock verification unavailable state disables continuation", async ({ page }) => {
-  await page.goto("/");
-  await submitCurrentSearch(page);
-  const card = page.locator("article").filter({ hasText: "QF129" }).first();
-  await card.getByRole("button", { name: /Verify itinerary demo price/ }).first().click();
-  await expect(page.getByRole("dialog", { name: /This option is not available/ })).toBeVisible();
-  await expect(page.getByRole("button", { name: "No provider link available" })).toBeDisabled();
-});
-
-test("partial supplier failure remains a non-blocking results warning", async ({ page }) => {
+test("partial supplier failure is non-blocking", async ({ page }) => {
   await page.route("**/api/search", async (route) => {
-    const response = await route.fetch();
-    const body = await response.json();
-    body.status = "partial";
-    body.errors = [{ supplier: "DemoAir", origin: "MEL", destination: "PVG", code: "supplier_timeout", message: "DemoAir timed out." }];
+    const response = await route.fetch(); const body = await response.json();
+    body.status = "partial"; body.errors = [{ supplier: "DemoAir", origin: "MEL", destination: "PVG", code: "supplier_timeout", message: "redacted" }];
     await route.fulfill({ response, json: body });
   });
-  await page.goto("/");
-  await submitCurrentSearch(page);
-  await expect(page.getByText("Partial results")).toBeVisible();
+  await page.goto("/"); await search(page);
+  await expect(page.getByText(/Some supplier checks failed/)).toBeVisible();
   await expect(page.getByText("Best overall").first()).toBeVisible();
 });

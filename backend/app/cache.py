@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
@@ -14,7 +15,7 @@ from app.models import Cabin, Supplier
 MOCK_FLIGHT_PRICE_TTL_SECONDS = 5 * 60
 LIVE_FLIGHT_PRICE_TTL_SECONDS = 10 * 60
 AIRPORT_DATA_TTL_SECONDS = 30 * 24 * 60 * 60
-CANDIDATE_HUBS_TTL_SECONDS = 7 * 24 * 60 * 60
+FLIGHT_CACHE_VERSION = "v2"
 
 logger = logging.getLogger("splitfare.cache")
 
@@ -25,7 +26,6 @@ class CacheCategory(str, Enum):
     mock_flight_price = "mock_flight_price"
     live_flight_price = "live_flight_price"
     airport_data = "airport_data"
-    candidate_hubs = "candidate_hubs"
 
 
 @dataclass(frozen=True)
@@ -65,15 +65,32 @@ def flight_cache_key(
     passengers: int,
     cabin: Cabin,
     currency: str,
+    *,
+    origin_city_id: str,
+    destination_city_id: str,
+    resolved_origin_airports: list[str],
+    resolved_destination_airports: list[str],
+    min_gap_hours: float,
+    max_gap_hours: float,
+    supplier_mode: str,
 ) -> str:
-    return (
-        f"flight:{supplier.value}:{origin}:{destination}:{departure_date}:"
-        f"{passengers}:{cabin.value}:{currency}"
-    )
-
-
-def candidate_hubs_cache_key(origin: str, destination: str) -> str:
-    return f"candidate_hubs:{origin}:{destination}"
+    dimensions = {
+        "origin_city_id": origin_city_id,
+        "destination_city_id": destination_city_id,
+        "resolved_origin_airports": sorted(resolved_origin_airports),
+        "resolved_destination_airports": sorted(resolved_destination_airports),
+        "departure_date": departure_date,
+        "passengers": passengers,
+        "cabin": cabin.value,
+        "min_gap_hours": min_gap_hours,
+        "max_gap_hours": max_gap_hours,
+        "currency": currency,
+        "supplier_mode": supplier_mode,
+    }
+    fingerprint = hashlib.sha256(
+        json.dumps(dimensions, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    ).hexdigest()[:24]
+    return f"flight:{FLIGHT_CACHE_VERSION}:{supplier.value}:{origin}:{destination}:{fingerprint}"
 
 
 class _MemoryEntry:

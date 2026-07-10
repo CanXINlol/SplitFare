@@ -14,7 +14,12 @@
 
 - [x] English/Chinese alias、IATA、city、startsWith、contains 有测试。
 - [x] MEL 精确输入 airport-first；Melbourne/墨尔本 city-first。
-- [x] City 提交稳定 place_id；airport 只解析自身。
+- [x] 城市选择只提交稳定 `city_id`；用户不能直接选择机场。
+- [x] 大洲 → 国家/地区 → 城市层级来自唯一后端目录。
+- [x] 旧 Place autocomplete、alias、search/resolve API 已删除。
+- [x] 中文/英文覆盖首页、选择器、结果、风险、价格、错误与验价。
+- [x] 语言持久化且切换语言不触发航班重搜。
+- [x] 浏览器搜索状态和 flight cache 已升级到 v2。
 - [x] Autocomplete 有 debounce、loading、empty、error、keyboard 与 ARIA combobox。
 - [x] Melbourne → Shanghai 生成 MEL/AVV × PVG/SHA baseline。
 - [x] Origin/destination/hub、route query、supplier query 与并发均有上限。

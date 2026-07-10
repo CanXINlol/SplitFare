@@ -5,7 +5,18 @@ from datetime import date
 from app.adapters.mock_supplier import MockSupplierAdapter
 from app.adapters.orchestrator import SupplierOrchestrator
 from app.cache import RedisCache, flight_cache_key
-from app.models import Cabin, PriceStatus, Supplier
+from app.models import Cabin, PriceStatus, SearchCacheContext, Supplier
+
+
+CONTEXT = SearchCacheContext(
+    originCityId="city:melbourne-au",
+    destinationCityId="city:shanghai-cn",
+    resolvedOriginAirports=["MEL", "AVV"],
+    resolvedDestinationAirports=["PVG", "SHA"],
+    minGapHours=3,
+    maxGapHours=12,
+    supplierMode="mock",
+)
 
 
 class CountingMockAdapter(MockSupplierAdapter):
@@ -71,8 +82,8 @@ def test_second_same_route_search_hits_supplier_cache() -> None:
     orchestrator = SupplierOrchestrator([adapter], cache=RedisCache(enable_memory_fallback=True))
     query = ("MEL", "PVG", date(2026, 8, 12), 1, Cabin.economy, "AUD")
 
-    first = asyncio.run(orchestrator.search_route(*query))
-    second = asyncio.run(orchestrator.search_route(*query))
+    first = asyncio.run(orchestrator.search_route(*query, CONTEXT))
+    second = asyncio.run(orchestrator.search_route(*query, CONTEXT))
 
     assert [offer.id for offer in first.offers] == [offer.id for offer in second.offers]
     assert all(offer.price_status == PriceStatus.confirmed for offer in first.offers)
@@ -81,7 +92,7 @@ def test_second_same_route_search_hits_supplier_cache() -> None:
 
 
 def test_flight_cache_key_uses_required_shape() -> None:
-    assert flight_cache_key(
+    key = flight_cache_key(
         Supplier.mock_sky,
         "MEL",
         "PVG",
@@ -89,4 +100,26 @@ def test_flight_cache_key_uses_required_shape() -> None:
         1,
         Cabin.economy,
         "AUD",
-    ) == "flight:MockSky:MEL:PVG:2026-08-12:1:economy:AUD"
+        origin_city_id="city:melbourne-au",
+        destination_city_id="city:shanghai-cn",
+        resolved_origin_airports=["MEL", "AVV"],
+        resolved_destination_airports=["PVG", "SHA"],
+        min_gap_hours=3,
+        max_gap_hours=12,
+        supplier_mode="mock",
+    )
+    assert key.startswith("flight:v2:MockSky:MEL:PVG:")
+
+
+def test_cache_key_changes_for_city_airports_gap_and_mode() -> None:
+    base = dict(
+        supplier=Supplier.mock_sky, origin="MEL", destination="PVG",
+        departure_date="2026-08-12", passengers=1, cabin=Cabin.economy, currency="AUD",
+        origin_city_id="city:melbourne-au", destination_city_id="city:shanghai-cn",
+        resolved_origin_airports=["MEL", "AVV"], resolved_destination_airports=["PVG", "SHA"],
+        min_gap_hours=3, max_gap_hours=12, supplier_mode="mock",
+    )
+    key = flight_cache_key(**base)
+    assert flight_cache_key(**{**base, "resolved_destination_airports": ["PVG"]}) != key
+    assert flight_cache_key(**{**base, "min_gap_hours": 4}) != key
+    assert flight_cache_key(**{**base, "supplier_mode": "live"}) != key

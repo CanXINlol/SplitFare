@@ -104,17 +104,6 @@ class SearchStatus(str, Enum):
     empty = "empty"
 
 
-class PlaceType(str, Enum):
-    city = "city"
-    airport = "airport"
-    metro_area = "metro_area"
-
-
-class PlaceAlias(ApiModel):
-    value: str = Field(min_length=1)
-    locale: str | None = None
-
-
 class CandidateAirport(ApiModel):
     iata_code: str = Field(pattern=r"^[A-Z]{3}$")
     name: str = Field(min_length=1)
@@ -128,38 +117,59 @@ class CandidateAirport(ApiModel):
     has_mock_flight_data: bool = False
 
 
-class Place(ApiModel):
-    id: str = Field(min_length=1)
-    type: PlaceType
-    name: str = Field(min_length=1)
-    display_name: str = Field(min_length=1)
-    country: str = Field(min_length=1)
-    aliases: list[PlaceAlias] = Field(default_factory=list)
-    airport_codes: list[str] = Field(default_factory=list)
-    iata_code: str | None = Field(default=None, pattern=r"^[A-Z]{3}$")
-    is_major_hub: bool = False
+class Continent(ApiModel):
+    continent_id: str = Field(pattern=r"^[a-z-]+$")
+    continent_name_zh: str = Field(min_length=1)
+    continent_name_en: str = Field(min_length=1)
     priority: int = Field(ge=1)
 
 
-class PlaceSearchResponse(ApiModel):
-    results: list[Place]
+class Country(ApiModel):
+    country_id: str = Field(pattern=r"^[a-z-]+$")
+    continent_id: str = Field(pattern=r"^[a-z-]+$")
+    country_name_zh: str = Field(min_length=1)
+    country_name_en: str = Field(min_length=1)
+    country_code: str = Field(pattern=r"^[A-Z]{2}$")
+    priority: int = Field(ge=1)
 
 
-class ResolvePlaceRequest(ApiModel):
-    place_id: str = Field(min_length=1)
+class City(ApiModel):
+    city_id: str = Field(pattern=r"^city:[a-z0-9-]+$")
+    city_name_zh: str = Field(min_length=1)
+    city_name_en: str = Field(min_length=1)
+    country_id: str = Field(pattern=r"^[a-z-]+$")
+    airport_codes: list[str] = Field(min_length=1)
+    priority: int = Field(ge=1)
+    enabled: bool = True
+
+    @field_validator("airport_codes")
+    @classmethod
+    def validate_airport_codes(cls, value: list[str]) -> list[str]:
+        if any(len(code) != 3 or not code.isalpha() or code != code.upper() for code in value):
+            raise ValueError("airport_codes must contain uppercase three-letter IATA codes")
+        if len(value) != len(set(value)):
+            raise ValueError("airport_codes must be unique within a city")
+        return value
 
 
-class ResolvedPlace(ApiModel):
-    place_id: str
-    type: PlaceType
-    display_name: str
-    country: str
+class CityCatalog(ApiModel):
+    version: str = Field(min_length=1)
+    continents: list[Continent]
+    countries: list[Country]
+    cities: list[City]
+
+
+class ResolvedCity(ApiModel):
+    city_id: str
+    city_name_zh: str
+    city_name_en: str
+    country_id: str
     airports: list[CandidateAirport] = Field(min_length=1)
 
 
 class SearchRequest(ApiModel):
-    origin_place_id: str = Field(min_length=1)
-    destination_place_id: str = Field(min_length=1)
+    origin_city_id: str = Field(pattern=r"^city:[a-z0-9-]+$")
+    destination_city_id: str = Field(pattern=r"^city:[a-z0-9-]+$")
     departure_date: date
     min_gap_hours: float = Field(ge=1, le=24)
     max_gap_hours: float = Field(ge=1, le=36)
@@ -179,15 +189,12 @@ class SearchRequest(ApiModel):
     def normalize_currency(cls, value: object) -> object:
         return value.strip().upper() if isinstance(value, str) else value
 
-    @field_validator("origin_place_id", "destination_place_id", mode="before")
+    @field_validator("origin_city_id", "destination_city_id", mode="before")
     @classmethod
-    def normalize_place_id(cls, value: object) -> object:
+    def normalize_city_id(cls, value: object) -> object:
         if not isinstance(value, str):
             return value
-        stripped = value.strip()
-        if stripped.lower().startswith("airport:"):
-            return f"airport:{stripped.split(':', 1)[1].upper()}"
-        return stripped.lower()
+        return value.strip().lower()
 
     @field_validator("candidate_hubs", mode="before")
     @classmethod
@@ -198,8 +205,8 @@ class SearchRequest(ApiModel):
 
     @model_validator(mode="after")
     def validate_search(self) -> SearchRequest:
-        if self.origin_place_id == self.destination_place_id:
-            raise ValueError("origin and destination places must differ")
+        if self.origin_city_id == self.destination_city_id:
+            raise ValueError("origin and destination cities must differ")
         if self.max_gap_hours < self.min_gap_hours:
             raise ValueError("max_gap_hours must be greater than or equal to min_gap_hours")
         if self.candidate_hubs:
@@ -372,9 +379,19 @@ class FlightQuery(ApiModel):
     hub: str | None = None
 
 
+class SearchCacheContext(ApiModel):
+    origin_city_id: str
+    destination_city_id: str
+    resolved_origin_airports: list[str]
+    resolved_destination_airports: list[str]
+    min_gap_hours: float
+    max_gap_hours: float
+    supplier_mode: str = Field(pattern=r"^(mock|live)$")
+
+
 class AirportSearchMatrix(ApiModel):
-    origin: ResolvedPlace
-    destination: ResolvedPlace
+    origin: ResolvedCity
+    destination: ResolvedCity
     origin_airports: list[CandidateAirport] = Field(min_length=1, max_length=3)
     destination_airports: list[CandidateAirport] = Field(min_length=1, max_length=3)
     hubs: list[CandidateAirport] = Field(default_factory=list, max_length=12)

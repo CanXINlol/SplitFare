@@ -19,6 +19,11 @@ services:
       API_BASE_URL: http://localhost:8000
       FRONTEND_ORIGIN: http://localhost:3000,http://127.0.0.1:3000,http://localhost:8080,http://127.0.0.1:8080
       ENABLE_MOCK_SUPPLIER: "true"
+      DUFFEL_MODE: disabled
+      DUFFEL_API_TOKEN: ""
+      DUFFEL_MAX_RETRIES: "1"
+      DUFFEL_CACHE_TTL_SECONDS: "600"
+      DUFFEL_ALLOWS_CACHE: "false"
       LOG_LEVEL: INFO
       RATE_LIMIT_REQUESTS_PER_MINUTE: "120"
       DATABASE_URL: postgresql+psycopg://splitfare:splitfare@db:5432/splitfare

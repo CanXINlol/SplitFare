@@ -1,0 +1,33 @@
+{
+  "meta": {"request_id": "req_sandbox_fixture"},
+  "data": {
+    "id": "orq_sandbox_fixture",
+    "live_mode": false,
+    "offers": [
+      {
+        "id": "off_sandbox_123",
+        "live_mode": false,
+        "total_amount": "998.50",
+        "total_currency": "AUD",
+        "expires_at": "2027-08-01T00:10:00Z",
+        "slices": [
+          {
+            "segments": [
+              {
+                "id": "seg_sandbox_1",
+                "origin": {"iata_code": "MEL"},
+                "destination": {"iata_code": "PVG"},
+                "departing_at": "2026-08-12T01:00:00+10:00",
+                "arriving_at": "2026-08-12T10:30:00+08:00",
+                "marketing_carrier": {"iata_code": "QF", "name": "Qantas"},
+                "operating_carrier": {"iata_code": "QF", "name": "Qantas"},
+                "marketing_carrier_flight_number": "129",
+                "passengers": [{"baggages": [{"type": "checked", "quantity": 1}]}]
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

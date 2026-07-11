@@ -108,7 +108,7 @@ def test_flight_cache_key_uses_required_shape() -> None:
         max_gap_hours=12,
         supplier_mode="mock",
     )
-    assert key.startswith("flight:v2:MockSky:MEL:PVG:")
+    assert key.startswith("flight:v3:MockSky:MEL:PVG:")
 
 
 def test_cache_key_changes_for_city_airports_gap_and_mode() -> None:
@@ -123,3 +123,7 @@ def test_cache_key_changes_for_city_airports_gap_and_mode() -> None:
     assert flight_cache_key(**{**base, "resolved_destination_airports": ["PVG"]}) != key
     assert flight_cache_key(**{**base, "min_gap_hours": 4}) != key
     assert flight_cache_key(**{**base, "supplier_mode": "live"}) != key
+    assert flight_cache_key(**{**base, "supplier_mode": "sandbox"}) != key
+    assert flight_cache_key(**{**base, "supplier_mode": "sandbox"}) != flight_cache_key(
+        **{**base, "supplier_mode": "live"}
+    )

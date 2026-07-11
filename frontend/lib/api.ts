@@ -82,3 +82,17 @@ export async function verifyBookingOption(
   }
   return response.json() as Promise<PreBookingVerificationResponse>;
 }
+
+export async function confirmProviderRedirect(
+  input: PreBookingVerificationRequest,
+): Promise<{ bookingUrl: string }> {
+  const response = await apiFetch("/api/booking-options/redirect-confirmed", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  if (!response.ok) {
+    throw await responseError(response, "Could not confirm provider redirect.");
+  }
+  return response.json() as Promise<{ bookingUrl: string }>;
+}

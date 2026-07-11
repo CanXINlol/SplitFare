@@ -7,6 +7,7 @@ from app.adapters.mock_supplier import MockSupplierAdapter
 from app.adapters.orchestrator import SupplierOrchestrator
 from app.adapters.trip_com import TripComAffiliateAdapter
 from app.models import Cabin, SearchCacheContext, SearchRequest, SearchStatus, Supplier, SupplierCapabilities
+from app.config import Settings
 from app.search import SearchService
 from app.search_orchestrator import (
     MAX_HUBS,
@@ -60,6 +61,20 @@ class BurstMockAdapter(MockSupplierAdapter):
         return [offers[0].model_copy(update={"id": f"burst-{index}"}) for index in range(35)]
 
 
+class RecordingDuffelAdapter(DuffelSupplierAdapter):
+    def __init__(self):
+        super().__init__(Settings(
+            enable_mock_supplier=False,
+            duffel_mode="sandbox",
+            duffel_api_token="duffel_test_fixture",
+        ))
+        self.routes: list[tuple[str, str]] = []
+
+    def _fetch_one_way(self, origin, destination, departure_date, passengers, cabin, currency):
+        self.routes.append((origin, destination))
+        return {"data": {"live_mode": False, "offers": []}, "_splitfare": {"mode": "sandbox", "cabin": cabin.value}}
+
+
 def test_mel_to_pvg_generates_baseline_and_hub_query_plan() -> None:
     plan = generate_query_plan(request())
     assert plan[0].origin == "MEL" and plan[0].destination == "PVG"
@@ -74,6 +89,15 @@ def test_custom_hubs_are_deduplicated_without_recursion() -> None:
     search_request = request(["BKK", "BKK", "SIN"])
     assert generate_candidate_hubs(search_request) == ("BKK", "SIN")
     assert len(generate_query_plan(search_request)) == 16
+
+
+def test_real_adapter_receives_all_city_resolved_baseline_airport_pairs() -> None:
+    adapter = RecordingDuffelAdapter()
+    low_level = SupplierOrchestrator([adapter], supplier_mode="sandbox")
+    asyncio.run(SearchOrchestrator(low_level, 1).collect_offers(request([])))
+    assert set(adapter.routes) == {
+        ("MEL", "PVG"), ("MEL", "SHA"), ("AVV", "PVG"), ("AVV", "SHA")
+    }
 
 
 def test_route_queries_run_concurrently() -> None:
@@ -94,7 +118,7 @@ def test_supplier_timeout_keeps_other_supplier_results() -> None:
     ], supplier_timeout_seconds=0.02)
     outcome = asyncio.run(SearchOrchestrator(low_level, 1).collect_offers(request(["BKK"])))
     assert any(offer.supplier == Supplier.mock_sky for offer in outcome.offers)
-    assert any(error.code == "supplier_timeout" for error in outcome.errors)
+    assert any(error.code == "SUPPLIER_TIMEOUT" for error in outcome.errors)
 
 
 def test_total_timeout_cancels_pending_route_queries() -> None:
@@ -105,7 +129,7 @@ def test_total_timeout_cancels_pending_route_queries() -> None:
         SearchOrchestrator(low_level, total_timeout_seconds=0.02).collect_offers(request(["BKK"]))
     )
     assert outcome.offers == ()
-    assert any(error.code == "search_timeout" for error in outcome.errors)
+    assert any(error.code == "SEARCH_TIMEOUT" for error in outcome.errors)
 
 
 def test_supplier_leg_results_are_capped_at_30() -> None:
@@ -149,3 +173,19 @@ def test_supplier_failure_yields_partial_search_response() -> None:
     assert response.results.ranked_results
     assert response.errors
     assert response.search_id
+
+
+def test_all_real_supplier_failures_return_failed_not_empty_or_mock() -> None:
+    adapter = DuffelSupplierAdapter(Settings(
+        enable_mock_supplier=False,
+        duffel_mode="sandbox",
+        duffel_api_token=None,
+    ))
+    low_level = SupplierOrchestrator([adapter], supplier_mode="sandbox")
+    response = asyncio.run(SearchService(SearchOrchestrator(low_level, 1)).search(request([])))
+    assert response.status == SearchStatus.failed
+    assert response.results.ranked_results == []
+    assert response.metadata.mode == "sandbox"
+    assert response.metadata.demo_data is False
+    assert response.errors
+    assert {error.code for error in response.errors} == {"SUPPLIER_AUTH_FAILED"}

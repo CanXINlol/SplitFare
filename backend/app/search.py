@@ -119,8 +119,11 @@ class SearchService:
 
     @property
     def demo_data(self) -> bool:
-        mock_suppliers = {Supplier.mock_sky, Supplier.demo_air, Supplier.budget_demo}
-        return any(adapter.name in mock_suppliers for adapter in self.orchestrator.supplier_orchestrator.adapters)
+        return self.orchestrator.supplier_orchestrator.supplier_mode == "mock"
+
+    @property
+    def supplier_mode(self) -> str:
+        return self.orchestrator.supplier_orchestrator.supplier_mode
 
     def _register_booking_options(self, response: SearchResponse) -> None:
         contexts: dict[str, tuple[str, BookingOption]] = {}
@@ -204,12 +207,15 @@ class SearchService:
         cheapest = by_id.get(cheapest.id) if cheapest else None
         safest = by_id.get(safest.id) if safest else None
         status = (
-            SearchStatus.empty if not ranked_results
+            SearchStatus.failed if not ranked_results and supplier_result.errors
+            else SearchStatus.empty if not ranked_results
             else SearchStatus.partial if supplier_result.errors
             else SearchStatus.complete
         )
         explanation = (
-            "No itineraries matched the route, date and connection-gap constraints."
+            "SUPPLIER_SEARCH_FAILED"
+            if status == SearchStatus.failed
+            else "No itineraries matched the route, date and connection-gap constraints."
             if status == SearchStatus.empty
             else "Results are partial because one or more supplier queries failed or timed out."
             if status == SearchStatus.partial
@@ -242,7 +248,7 @@ class SearchService:
                 if error.supplier is not None
             ],
             metadata=SearchMetadata(
-                mode="mock" if self.demo_data else "live",
+                mode=self.supplier_mode,
                 demo_data=self.demo_data,
                 searched_origin_airports=[item.iata_code for item in supplier_result.matrix.origin_airports],
                 searched_destination_airports=[item.iata_code for item in supplier_result.matrix.destination_airports],
@@ -256,11 +262,11 @@ class SearchService:
                 fresh_price_count=sum(offer.expires_at > now for offer in supplier_result.offers),
                 expired_price_count=sum(offer.expires_at <= now for offer in supplier_result.offers),
             ),
-            disclaimer=(
-                "Fictional demo fares only. Not live availability and not a guarantee of transit, baggage, visa or entry feasibility."
-                if self.demo_data
-                else "Results cover connected suppliers only and do not guarantee transit, baggage, visa or entry feasibility."
-            ),
+            disclaimer={
+                "mock": "Fictional demo fares only. Not live availability and not a guarantee of transit, baggage, visa or entry feasibility.",
+                "sandbox": "Duffel sandbox data only. Not live availability and not a guarantee of transit, baggage, visa or entry feasibility.",
+                "live": "Live supplier results may change and do not guarantee transit, baggage, visa or entry feasibility.",
+            }[self.supplier_mode],
         )
         self._register_booking_options(response)
         if self.persistence_service is not None:

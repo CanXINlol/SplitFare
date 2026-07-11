@@ -16,11 +16,25 @@ from app.models import (
 
 
 class SupplierAdapterError(RuntimeError):
-    pass
+    def __init__(
+        self,
+        message: str,
+        *,
+        code: str = "SUPPLIER_UNAVAILABLE",
+        retryable: bool = False,
+        request_id: str | None = None,
+        status_code: int | None = None,
+    ):
+        super().__init__(message)
+        self.code = code
+        self.retryable = retryable
+        self.request_id = request_id
+        self.status_code = status_code
 
 
 class AdapterNotConfiguredError(SupplierAdapterError):
-    pass
+    def __init__(self, message: str):
+        super().__init__(message, code="SUPPLIER_AUTH_FAILED", retryable=False)
 
 
 class UnsupportedSupplierCapabilityError(SupplierAdapterError):

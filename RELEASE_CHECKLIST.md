@@ -1,4 +1,4 @@
-# SplitFare Release Checklist — Phase 14.6
+# SplitFare Release Checklist — Phase 16
 
 只有所有 release gate 均通过时才能标记 READY FOR RELEASE GATE。
 
@@ -17,7 +17,7 @@
 - [x] 旧 Place autocomplete、alias、search/resolve API 已删除。
 - [x] 中文/英文覆盖首页、选择器、结果、风险、价格、错误与验价。
 - [x] 语言持久化且切换语言不触发航班重搜。
-- [x] 浏览器搜索状态和 flight cache 已升级到 v2。
+- [x] 浏览器搜索状态保持 v2；flight supplier cache 已升级到 v3。
 - [x] 城市选择器支持分层切换、触屏、键盘按钮、Escape 和移动端滚动。
 - [x] Melbourne → Shanghai 生成 MEL/AVV × PVG/SHA baseline。
 - [x] Origin/destination/hub、route query、supplier query 与并发均有上限。
@@ -43,12 +43,26 @@
 - [x] Verification request 只提交 search/itinerary/option IDs。
 - [x] Server canonical option 防止 price/URL 注入和 option 错绑。
 - [x] 外部 booking URL 只允许 HTTP(S)，非本地 HTTP 被拒绝。
+- [x] Duffel v2 search 与 GET Offer verify contract 已实现。
+- [x] Duffel token 只在后端 Bearer header 中使用。
+- [x] Duffel normalizer 使用 Decimal、timezone-aware datetime，并过滤缺失字段。
+- [x] Timeout、auth、rate limit、invalid response、unavailable 使用稳定错误码。
+- [x] Correlation ID 和 Duffel request ID 只用于后端诊断。
+- [x] 当前无 credential，未伪造 sandbox/live success。
+- [x] 验价状态区分 unchanged/increased/decreased/unavailable/expired/timeout/unsupported。
+- [x] 客户端只提交 canonical IDs，不提交价格或跳转 URL。
+- [x] 未配置的 Trip.com/Skyscanner 不再生成购买选项。
+- [x] Supplier URL 仅允许 HTTPS allowlist；开发 HTTP 仅允许 localhost。
+- [x] example/unsafe/open-redirect host 被拒绝。
+- [x] Analytics 事件不记录 token、完整 URL、支付或个人信息。
 
 ## Mock / production isolation
 
 - [x] Backend production image 默认 `ENABLE_MOCK_SUPPLIER=false`。
 - [x] Production demo 必须显式启用 mock，并显示 Demo Data。
 - [x] Mock mode 强制禁用 Duffel live search，防止混排。
+- [x] Sandbox 与 live mode 不加载 Mock search adapters。
+- [x] Sandbox 响应必须 `live_mode=false`，live 响应必须 `live_mode=true`。
 - [x] Production CORS wildcard 启动失败。
 - [x] Production debug/raw payload 与 raw exception 被屏蔽。
 - [x] Production code response 无 example booking host。
@@ -57,14 +71,14 @@
 ## Automated release gates
 
 - [x] Backend Ruff：`.\.venv\Scripts\python.exe -m ruff check app tests`
-- [x] Backend pytest：148 passed；禁用无收益的 pytest cache 后无 ACL warning。
+- [x] Backend pytest：172 passed；禁用无收益的 pytest cache 后无 ACL warning。
 - [x] Frontend typecheck：`npm run typecheck`
 - [x] Frontend ESLint：`npm run lint`
-- [x] Frontend Vitest：7 passed。
+- [x] Frontend Vitest：13 passed。
 - [x] Playwright mobile Chromium：5 passed。
-- [x] Frontend production build 完整通过。
-- [x] Backend 与 frontend Docker images 构建通过。
-- [x] Docker Compose startup、前端 HTTP 200 与 `/health` smoke test 通过。
+- [ ] Phase 16 frontend production build 最终复验（编译与类型阶段通过；首次受运行中的 dev `.next` 竞争影响，隔离目录修复后因本轮子进程授权额度耗尽未能重跑）。
+- [ ] Phase 16 后端 Docker image 复验（当前 Docker Desktop daemon 未运行；Phase 14 镜像曾通过）。
+- [ ] Phase 16 Docker Compose startup、前端 HTTP 200 与 `/health` smoke test 复验。
 - [x] 旧 `.next`、`tsconfig.tsbuildinfo`、`.pytest_cache` 与 pytest 临时缓存已清理。
 
 ## Deployment gate
@@ -72,6 +86,7 @@
 - [ ] 设置 production `NEXT_PUBLIC_API_BASE_URL`。
 - [ ] 设置明确 `FRONTEND_ORIGIN`，无 wildcard。
 - [ ] 明确选择 production demo 或 production live。
+- [ ] Sandbox/live 发布前注入已授权的 `DUFFEL_API_TOKEN`，并完成真实账户 smoke test。
 - [ ] 如使用 PostgreSQL，运行 Alembic migration 与 seed。
 - [ ] 如为多实例部署，实现共享 verification registry 与 rate limiter，或限制为单实例 demo。
 - [ ] 执行部署后 health、CORS、raw payload、rate limit、mock/live 与 redirect smoke tests。

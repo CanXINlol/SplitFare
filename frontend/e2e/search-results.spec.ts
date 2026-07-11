@@ -35,7 +35,12 @@ test("墨尔本到上海 supports complete Chinese experience", async ({ page })
   await search(page, "zh");
   await expect(page.getByText(/自助中转 · 分开出票/).first()).toBeVisible();
   await expect(page.getByText(/若第一张票延误/).first()).toBeVisible();
-  await expect(page.getByText(/模拟价格，并非实时库存/).first()).toBeVisible();
+  await expect(page.getByText("模拟数据").first()).toBeVisible();
+  const directCard = page.locator("article.protected-card").first();
+  await directCard.getByRole("button", { name: "航班与购买选项" }).click();
+  await directCard.getByRole("button", { name: /MockSky/ }).first().click();
+  await expect(page.getByRole("dialog", { name: "继续前再次确认" })).toBeVisible();
+  await expect(page.getByText("价格未变化").first()).toBeVisible();
 });
 
 test("language switch preserves selected cities and does not repeat flight search", async ({ page }) => {
@@ -57,16 +62,16 @@ test("verification modal shows unchanged and unavailable demo states", async ({ 
   await expect(directCard.getByText("MU738")).toBeVisible();
   await directCard.getByRole("button", { name: /MockSky/ }).first().click();
   await expect(page.getByRole("dialog", { name: "Check before continuing" })).toBeVisible();
-  await expect(page.getByText("No demo price change")).toBeVisible();
+  await expect(page.getByText("Price unchanged").first()).toBeVisible();
 });
 
 test("partial supplier failure is non-blocking", async ({ page }) => {
   await page.route("**/api/search", async (route) => {
     const response = await route.fetch(); const body = await response.json();
-    body.status = "partial"; body.errors = [{ supplier: "DemoAir", origin: "MEL", destination: "PVG", code: "supplier_timeout", message: "redacted" }];
+    body.status = "partial"; body.errors = [{ supplier: "DemoAir", origin: "MEL", destination: "PVG", code: "SUPPLIER_TIMEOUT", message: "redacted" }];
     await route.fulfill({ response, json: body });
   });
   await page.goto("/"); await search(page);
-  await expect(page.getByText(/Some supplier checks failed/)).toBeVisible();
+  await expect(page.getByText(/Some supplier searches failed/)).toBeVisible();
   await expect(page.getByText("Best overall").first()).toBeVisible();
 });

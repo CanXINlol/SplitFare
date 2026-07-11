@@ -4,11 +4,13 @@ SplitFare 当前可部署为 production-like demo 或 live-mode shell。没有�
 
 ## Deployment modes
 
-| Mode | `APP_ENV` | `ENABLE_MOCK_SUPPLIER` | 行为 |
-| --- | --- | --- | --- |
-| Local/test | `local` / `test` | `true` | 确定性 demo data |
-| Production demo | `production` | `true`（显式） | UI/API 显示 Demo Data；不调用 live Duffel |
-| Production live shell | `production` | `false` | 禁用 mock；只调用明确配置且 capability 可用的 supplier |
+| Mode | `APP_ENV` | `ENABLE_MOCK_SUPPLIER` | `DUFFEL_MODE` | 行为 |
+| --- | --- | --- | --- | --- |
+| Local/test | `local` / `test` | `true` | `disabled` | 确定性 demo data |
+| Duffel sandbox | 任意 | `false` | `sandbox` | 只接受 `duffel_test_*` token，UI/API 显示 Sandbox |
+| Production live | `production` | `false` | `live` | 只接受非 test token，不回退或混入 Mock |
+
+`ENABLE_MOCK_SUPPLIER=true` 与 `DUFFEL_MODE=sandbox|live` 互斥；配置冲突时后端拒绝启动，防止测试价格与真实价格进入同一个排名。
 
 ## Vercel frontend
 
@@ -33,6 +35,12 @@ APP_VERSION=0.1.0
 API_BASE_URL=https://api.your-domain.test
 FRONTEND_ORIGIN=https://app.your-domain.test
 ENABLE_MOCK_SUPPLIER=false
+DUFFEL_MODE=live
+DUFFEL_API_TOKEN=<server-only-secret>
+DUFFEL_MAX_RETRIES=1
+DUFFEL_CACHE_TTL_SECONDS=600
+DUFFEL_ALLOWS_CACHE=false
+DUFFEL_BOOKING_ALLOWED_DOMAINS=
 LOG_LEVEL=INFO
 RATE_LIMIT_REQUESTS_PER_MINUTE=120
 MAX_SUPPLIER_QUERIES_PER_SEARCH=120
@@ -55,7 +63,9 @@ REDIS_URL=redis://...
 EXTERNAL_API_TIMEOUT_SECONDS=10
 ```
 
-`DUFFEL_API_TOKEN` 是后端专用的未来/live integration 配置。Mock mode 会强制禁用 Duffel live search，防止 live 与 mock 混合 ranking。
+`DUFFEL_API_TOKEN` 只能存在于后端 secret store。Sandbox 使用 `DUFFEL_MODE=sandbox` 和正式获得的 test token；无凭证时使用 `DUFFEL_MODE=disabled`，服务仍可启动。只有供应商合同明确允许时才将 `DUFFEL_ALLOWS_CACHE` 设为 `true`。
+
+`DUFFEL_BOOKING_ALLOWED_DOMAINS` 默认必须留空。只有 Duffel 实际返回与当前 Offer 绑定、且合同允许向用户跳转的 HTTPS 域名时才加入 allowlist。不要加入通用搜索页、example host 或客户端提交的域名。
 
 ## CORS
 

@@ -1,7 +1,6 @@
 import logging
 import time
-from dataclasses import replace
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any
 from uuid import uuid4
@@ -15,15 +14,15 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from app.adapters.duffel import DuffelSupplierAdapter
 from app.adapters.mock_supplier import MockSupplierAdapter
 from app.adapters.orchestrator import SupplierOrchestrator
-from app.adapters.trip_com import TripComAffiliateAdapter
-from app.adapters.skyscanner import SkyscannerSupplierAdapter
 from app.cache import RedisCache
+from app.booking_security import trusted_booking_url
 from app.config import Settings, load_settings
 from app.db import SessionLocal, init_database
 from app.models import (
     CityCatalog,
     PreBookingVerificationRequest,
     PreBookingVerificationResponse,
+    PreBookingStatus,
     PriceStatus,
     SearchRequest,
     SearchResponse,
@@ -65,15 +64,13 @@ except Exception as exception:
 cache = RedisCache.from_env()
 
 _rate_limit_hits: dict[str, list[float]] = {}
+_redirect_registry: dict[tuple[str, str, str], tuple[str, datetime]] = {}
 
 
 def build_supplier_adapters(settings: Settings):
-    duffel_settings = replace(settings, duffel_api_token=None) if settings.enable_mock_supplier else settings
-    adapters = [
-        TripComAffiliateAdapter(),
-        SkyscannerSupplierAdapter(),
-        DuffelSupplierAdapter(duffel_settings),
-    ]
+    if settings.enable_mock_supplier and settings.duffel_mode != "disabled":
+        raise ValueError("Mock mode cannot be combined with Duffel sandbox or live mode.")
+    adapters = [DuffelSupplierAdapter(settings)]
     if settings.enable_mock_supplier:
         adapters.extend([
             MockSupplierAdapter(Supplier.mock_sky),
@@ -87,6 +84,8 @@ supplier_orchestrator = SupplierOrchestrator(
     build_supplier_adapters(settings),
     cache=cache,
     max_concurrent_requests=settings.max_concurrent_supplier_requests,
+    supplier_timeout_seconds=max(10, settings.external_api_timeout_seconds + 2),
+    supplier_mode=settings.app_mode,
 )
 service = SearchService(
     SearchOrchestrator(
@@ -247,8 +246,11 @@ def _record_booking_event(
 def verify_booking_option(
     request: PreBookingVerificationRequest,
 ) -> PreBookingVerificationResponse:
-    click_payload = request.model_dump(mode="json")
-    _record_booking_event(request.search_id, "booking.clicked", click_payload)
+    safe_event = {
+        "itinerary_id": request.itinerary_id,
+        "booking_option_id": request.booking_option_id,
+    }
+    _record_booking_event(request.search_id, "booking_option_clicked", safe_event)
     option = service.get_booking_option(
         request.search_id, request.itinerary_id, request.booking_option_id
     )
@@ -260,8 +262,9 @@ def verify_booking_option(
     canonical_url = option.booking_url
     previous_price = option.price_amount
     currency = option.currency
-    if not option.capabilities.supports_price_verify:
+    if not option.supports_price_verify:
         response = PreBookingVerificationResponse(
+            booking_option_id=option.id,
             still_available=canonical_url is not None,
             current_price=None,
             previous_price=previous_price,
@@ -269,14 +272,16 @@ def verify_booking_option(
             price_changed=False,
             booking_url=canonical_url,
             checked_at=datetime.now(timezone.utc),
-            status=VerificationStatus.unsupported,
-            message="This provider does not support price verification in SplitFare. Check the final price on the provider.",
+            status=PreBookingStatus.unsupported,
+            message="VERIFY_UNSUPPORTED",
             can_continue=canonical_url is not None,
             requires_price_check=True,
         )
     else:
+        _record_booking_event(request.search_id, "verification_started", safe_event)
         if option.supplier is None or option.offer_id is None:
             response = PreBookingVerificationResponse(
+                booking_option_id=option.id,
                 still_available=False,
                 current_price=None,
                 previous_price=previous_price,
@@ -284,8 +289,8 @@ def verify_booking_option(
                 price_changed=False,
                 booking_url=None,
                 checked_at=datetime.now(timezone.utc),
-                status=VerificationStatus.unavailable,
-                message="This booking option cannot be verified right now.",
+                status=PreBookingStatus.unavailable,
+                message="VERIFY_UNAVAILABLE",
                 can_continue=False,
             )
         else:
@@ -307,12 +312,26 @@ def verify_booking_option(
             )
             current_price = verification.price_amount if still_available else None
             currency = verification.currency or currency
-            price_changed = (
-                current_price is not None
-                and previous_price is not None
-                and abs(current_price - previous_price) > Decimal("0.01")
-            )
+            if still_available and current_price is not None and previous_price is not None:
+                if current_price > previous_price + Decimal("0.01"):
+                    status = PreBookingStatus.increased
+                elif current_price < previous_price - Decimal("0.01"):
+                    status = PreBookingStatus.decreased
+                else:
+                    status = PreBookingStatus.unchanged
+            elif verification.status == VerificationStatus.expired:
+                status = PreBookingStatus.expired
+            elif verification.status == VerificationStatus.timeout:
+                status = PreBookingStatus.timeout
+            elif verification.status == VerificationStatus.unsupported:
+                status = PreBookingStatus.unsupported
+            else:
+                status = PreBookingStatus.unavailable
+            price_changed = status in {
+                PreBookingStatus.increased, PreBookingStatus.decreased
+            }
             response = PreBookingVerificationResponse(
+                booking_option_id=option.id,
                 still_available=still_available,
                 current_price=current_price,
                 previous_price=previous_price,
@@ -321,10 +340,57 @@ def verify_booking_option(
                 booking_url=canonical_url if still_available else None,
                 checked_at=verification.checked_at,
                 expires_at=verification.expires_at,
-                status=verification.status,
-                message=verification.message if still_available else verification.message,
+                status=status,
+                message=f"VERIFY_{status.value.upper()}",
                 can_continue=still_available and canonical_url is not None,
             )
 
-    _record_booking_event(request.search_id, "booking.verification_completed", response.model_dump(mode="json"))
+    if response.can_continue and response.booking_url is not None:
+        expiry = response.expires_at or datetime.now(timezone.utc) + timedelta(minutes=10)
+        _redirect_registry[(request.search_id, request.itinerary_id, option.id)] = (
+            str(response.booking_url), expiry
+        )
+    if response.status in {PreBookingStatus.unchanged}:
+        event_type = "verification_succeeded"
+    elif response.status in {PreBookingStatus.increased, PreBookingStatus.decreased}:
+        event_type = "verification_changed"
+    else:
+        event_type = "verification_failed"
+    _record_booking_event(
+        request.search_id,
+        event_type,
+        {**safe_event, "status": response.status.value},
+    )
     return response
+
+
+@app.post("/api/booking-options/redirect-confirmed")
+def confirm_provider_redirect(request: PreBookingVerificationRequest) -> dict[str, str]:
+    option = service.get_booking_option(
+        request.search_id, request.itinerary_id, request.booking_option_id
+    )
+    key = (request.search_id, request.itinerary_id, request.booking_option_id)
+    registered = _redirect_registry.get(key)
+    if option is None or registered is None:
+        raise HTTPException(status_code=409, detail="booking_redirect_not_verified")
+    registered_url, expires_at = registered
+    canonical_url = trusted_booking_url(
+        option.booking_url, supplier=option.supplier, settings=settings
+    ) if option.supplier is not None else None
+    if (
+        canonical_url is None
+        or str(canonical_url) != registered_url
+        or expires_at <= datetime.now(timezone.utc)
+    ):
+        _redirect_registry.pop(key, None)
+        raise HTTPException(status_code=409, detail="booking_redirect_expired")
+    _record_booking_event(
+        request.search_id,
+        "provider_redirect_confirmed",
+        {
+            "itinerary_id": request.itinerary_id,
+            "booking_option_id": request.booking_option_id,
+            "supplier": option.supplier.value,
+        },
+    )
+    return {"bookingUrl": registered_url}

@@ -83,6 +83,16 @@ class VerificationStatus(str, Enum):
     timeout = "timeout"
 
 
+class PreBookingStatus(str, Enum):
+    unchanged = "unchanged"
+    increased = "increased"
+    decreased = "decreased"
+    unavailable = "unavailable"
+    expired = "expired"
+    timeout = "timeout"
+    unsupported = "unsupported"
+
+
 class BookingOptionType(str, Enum):
     airline = "airline"
     trip_com = "trip_com"
@@ -102,6 +112,7 @@ class SearchStatus(str, Enum):
     complete = "complete"
     partial = "partial"
     empty = "empty"
+    failed = "failed"
 
 
 class CandidateAirport(ApiModel):
@@ -225,6 +236,8 @@ class Segment(ApiModel):
     arrival_at: datetime
     airline: str = Field(min_length=2)
     operating_airline: str = Field(min_length=2)
+    marketing_airline_name: str | None = None
+    operating_airline_name: str | None = None
     flight_number: str = Field(min_length=3)
 
     @field_validator("departure_at", "arrival_at")
@@ -312,6 +325,7 @@ class PreBookingVerificationRequest(ApiModel):
 
 
 class PreBookingVerificationResponse(ApiModel):
+    booking_option_id: str = Field(min_length=1, max_length=500)
     still_available: bool
     current_price: Decimal | None = Field(default=None, gt=0, allow_inf_nan=False)
     previous_price: Decimal | None = Field(default=None, gt=0, allow_inf_nan=False)
@@ -320,7 +334,7 @@ class PreBookingVerificationResponse(ApiModel):
     booking_url: HttpUrl | None = None
     checked_at: datetime
     expires_at: datetime | None = None
-    status: VerificationStatus
+    status: PreBookingStatus
     message: str
     can_continue: bool = False
     requires_price_check: bool = False
@@ -386,7 +400,7 @@ class SearchCacheContext(ApiModel):
     resolved_destination_airports: list[str]
     min_gap_hours: float
     max_gap_hours: float
-    supplier_mode: str = Field(pattern=r"^(mock|live)$")
+    supplier_mode: str = Field(pattern=r"^(mock|sandbox|live)$")
 
 
 class AirportSearchMatrix(ApiModel):
@@ -430,7 +444,7 @@ class PriceFreshness(ApiModel):
 
 
 class SearchMetadata(ApiModel):
-    mode: str = Field(pattern=r"^(mock|live)$")
+    mode: str = Field(pattern=r"^(mock|sandbox|live)$")
     demo_data: bool
     searched_origin_airports: list[str]
     searched_destination_airports: list[str]
@@ -447,6 +461,7 @@ class SearchMetadata(ApiModel):
 
 class BookingOption(ApiModel):
     id: str = Field(min_length=1)
+    booking_option_id: str | None = Field(default=None, min_length=1)
     type: BookingOptionType
     label: str = Field(min_length=1)
     display_name: str | None = None
@@ -459,6 +474,7 @@ class BookingOption(ApiModel):
     currency: str | None = Field(default=None, pattern=r"^[A-Z]{3}$")
     price_status: PriceStatus = PriceStatus.unavailable
     verification_required: bool = True
+    supports_price_verify: bool | None = None
     tracking_id: str | None = None
     last_checked_at: datetime | None = None
     expires_at: datetime | None = None
@@ -493,6 +509,16 @@ class BookingOption(ApiModel):
 
     @model_validator(mode="after")
     def validate_price_status(self) -> BookingOption:
+        if self.booking_option_id is None:
+            object.__setattr__(self, "booking_option_id", self.id)
+        elif self.booking_option_id != self.id:
+            raise ValueError("booking_option_id must match id")
+        if self.supports_price_verify is None:
+            object.__setattr__(
+                self, "supports_price_verify", self.capabilities.supports_price_verify
+            )
+        elif self.supports_price_verify != self.capabilities.supports_price_verify:
+            raise ValueError("supports_price_verify must match supplier capabilities")
         if self.url is None and self.booking_url is not None:
             object.__setattr__(self, "url", self.booking_url)
         if self.booking_url is None and self.url is not None:
@@ -510,11 +536,11 @@ class BookingOption(ApiModel):
         ):
             raise ValueError("confirmed booking options require price and currency")
         if (
-            self.price_status == PriceStatus.confirmed
+            self.price_status in {PriceStatus.confirmed, PriceStatus.cached}
             and self.expires_at is not None
             and self.expires_at <= datetime.now(self.expires_at.tzinfo)
         ):
-            object.__setattr__(self, "price_status", PriceStatus.cached)
+            object.__setattr__(self, "price_status", PriceStatus.unavailable)
         if self.capabilities.supports_price_verify and self.offer_id is None:
             raise ValueError("price-verifiable booking options require an offer_id")
         return self
@@ -546,6 +572,7 @@ class NormalizedFlightOffer(ApiModel):
     cabin: Cabin
     baggage_included: bool | None
     booking_url: HttpUrl | None = None
+    booking_reference: str | None = None
     raw_payload: dict[str, Any] = Field(default_factory=dict)
     last_checked_at: datetime
     expires_at: datetime

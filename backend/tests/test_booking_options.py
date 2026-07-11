@@ -5,7 +5,9 @@ import pytest
 from pydantic import ValidationError
 
 from app.adapters.mock_supplier import build_mock_orchestrator
-from app.adapters.trip_com import TRIP_COM_TRACKING_ID, TripComAffiliateAdapter
+from app.booking_options import coverage_for_options
+from app.booking_security import trusted_booking_url
+from app.config import Settings
 from app.models import (
     BookingOption,
     BookingOptionType,
@@ -35,34 +37,36 @@ def search(search_request: SearchRequest):
     return asyncio.run(service.search(search_request))
 
 
-def test_trip_com_booking_option_is_returned_with_tracking_id_and_unconfirmed_price() -> None:
-    response = search(request())
-    trip_options = [
-        option
-        for itinerary in response.results.ranked_results
-        for option in itinerary.booking_options
-        if option.type == BookingOptionType.trip_com
-    ]
-    assert trip_options
-    assert all(option.label == "Check on Trip.com" for option in trip_options)
-    assert all(option.tracking_id == TRIP_COM_TRACKING_ID for option in trip_options)
-    assert all(option.price_status == PriceStatus.redirect_only for option in trip_options)
-    assert all(option.price_amount is None for option in trip_options)
-    assert all("tracking_id=splitfare_demo" in str(option.url) for option in trip_options)
-
-
-def test_skyscanner_booking_option_is_redirect_only() -> None:
+def test_search_does_not_add_unconfigured_second_supplier_redirects() -> None:
     response = search(request())
     options = [
         option
         for itinerary in response.results.ranked_results
         for option in itinerary.booking_options
-        if option.type == BookingOptionType.skyscanner
     ]
     assert options
-    assert all(option.price_status == PriceStatus.redirect_only for option in options)
-    assert all(option.price_amount is None for option in options)
-    assert all(not option.verification_required for option in options)
+    assert {option.type for option in options} == {BookingOptionType.supplier}
+    assert all(
+        option.supplier not in {Supplier.trip_com_affiliate, Supplier.skyscanner}
+        for option in options
+    )
+
+
+def test_redirect_only_and_estimated_are_not_confirmed_coverage() -> None:
+    options = [
+        BookingOption(
+            id="redirect", type="supplier", label="Redirect", supplier=Supplier.mock_sky,
+            priceStatus="redirect_only", capabilities={"supportsBookingUrl": True},
+        ),
+        BookingOption(
+            id="estimated", type="supplier", label="Estimate", supplier=Supplier.mock_sky,
+            priceAmount=90, currency="AUD", priceStatus="estimated",
+        ),
+    ]
+    coverage = coverage_for_options(options)
+    assert coverage.confirmed_supplier_count == 0
+    assert coverage.redirect_only_supplier_count == 1
+    assert coverage.estimated_supplier_count == 1
 
 
 def test_mock_supplier_booking_option_has_confirmed_price_status() -> None:
@@ -90,12 +94,9 @@ def test_split_ticket_booking_options_are_bound_per_ticket_and_sum_to_total() ->
     assert {option.offer_id for option in supplier_options} == {offer.id for offer in itinerary.offers}
 
 
-def test_trip_com_deep_link_does_not_create_fare_offers_or_affect_sorting() -> None:
+def test_redirect_only_options_do_not_create_fare_offers_or_affect_sorting() -> None:
     response = search(request(sort="cheapest"))
     cheapest_before_options = response.results.ranked_results[0].total_price
-    assert TripComAffiliateAdapter().search_one_way(
-        "MEL", "PVG", date(2026, 8, 12), 1, request().cabin, "AUD"
-    ) == []
     assert response.results.ranked_results[0].total_price == cheapest_before_options
     assert all(
         offer.supplier != Supplier.trip_com_affiliate
@@ -146,7 +147,7 @@ def test_production_safe_booking_options_do_not_use_example_hosts() -> None:
     assert "example.invalid" not in serialized
 
 
-def test_expired_confirmed_booking_option_is_downgraded_to_cached() -> None:
+def test_expired_confirmed_booking_option_is_unavailable() -> None:
     checked = datetime.now(timezone.utc) - timedelta(minutes=10)
     option = BookingOption(
         id="expired", type=BookingOptionType.supplier, label="Expired demo price",
@@ -156,4 +157,34 @@ def test_expired_confirmed_booking_option_is_downgraded_to_cached() -> None:
         priceStatus=PriceStatus.confirmed, lastCheckedAt=checked,
         expiresAt=checked + timedelta(minutes=5),
     )
+    assert option.price_status == PriceStatus.unavailable
+
+
+def test_cached_price_remains_distinct_while_valid() -> None:
+    checked = datetime.now(timezone.utc)
+    option = BookingOption(
+        id="cached", type="supplier", label="Cached", supplier=Supplier.mock_sky,
+        priceAmount=100, currency="AUD", priceStatus="cached",
+        lastCheckedAt=checked, expiresAt=checked + timedelta(minutes=5),
+    )
     assert option.price_status == PriceStatus.cached
+
+
+def test_supplier_domain_allowlist_rejects_open_redirects() -> None:
+    settings = Settings(
+        enable_mock_supplier=False, duffel_mode="live",
+        duffel_booking_allowed_domains=("checkout.duffel.com",),
+    )
+    assert trusted_booking_url(
+        "https://checkout.duffel.com/session/1",
+        supplier=Supplier.duffel,
+        settings=settings,
+    ) is not None
+    assert trusted_booking_url(
+        "https://checkout.duffel.com.evil.test/session/1",
+        supplier=Supplier.duffel,
+        settings=settings,
+    ) is None
+    assert trusted_booking_url(
+        "https://example.com/book", supplier=Supplier.duffel, settings=settings
+    ) is None

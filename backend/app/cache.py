@@ -15,7 +15,7 @@ from app.models import Cabin, Supplier
 MOCK_FLIGHT_PRICE_TTL_SECONDS = 5 * 60
 LIVE_FLIGHT_PRICE_TTL_SECONDS = 10 * 60
 AIRPORT_DATA_TTL_SECONDS = 30 * 24 * 60 * 60
-FLIGHT_CACHE_VERSION = "v2"
+FLIGHT_CACHE_VERSION = "v3"
 
 logger = logging.getLogger("splitfare.cache")
 

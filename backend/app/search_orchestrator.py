@@ -80,7 +80,7 @@ class SearchOrchestrator:
             resolved_destination_airports=[item.iata_code for item in matrix.destination_airports],
             min_gap_hours=request.min_gap_hours,
             max_gap_hours=request.max_gap_hours,
-            supplier_mode="mock" if any(adapter.name.value.startswith(("Mock", "Demo", "Budget")) for adapter in self.supplier_orchestrator.searchable_adapters) else "live",
+            supplier_mode=self.supplier_orchestrator.supplier_mode,
         )
         return await self.supplier_orchestrator.search_route(
             query.origin,
@@ -128,7 +128,7 @@ class SearchOrchestrator:
                 supplier=None,
                 origin=query.origin,
                 destination=query.destination,
-                code="search_timeout",
+                code="SEARCH_TIMEOUT",
                 message="The route query exceeded the total search timeout.",
             ))
         if pending:

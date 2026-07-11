@@ -35,6 +35,7 @@ export enum SearchStatus {
   Complete = "complete",
   Partial = "partial",
   Empty = "empty",
+  Failed = "failed",
 }
 
 export enum VerificationStatus {
@@ -44,6 +45,16 @@ export enum VerificationStatus {
   NotConfigured = "not_configured",
   Unsupported = "unsupported",
   Timeout = "timeout",
+}
+
+export enum PreBookingStatus {
+  Unchanged = "unchanged",
+  Increased = "increased",
+  Decreased = "decreased",
+  Unavailable = "unavailable",
+  Expired = "expired",
+  Timeout = "timeout",
+  Unsupported = "unsupported",
 }
 
 export enum BookingOptionType {
@@ -135,6 +146,8 @@ export interface Segment {
   arrivalAt: string;
   airline: string;
   operatingAirline: string;
+  marketingAirlineName?: string | null;
+  operatingAirlineName?: string | null;
   flightNumber: string;
 }
 
@@ -154,6 +167,7 @@ export interface NormalizedFlightOffer {
   cabin: Cabin;
   baggageIncluded: boolean | null;
   bookingUrl: string | null;
+  bookingReference?: string | null;
   lastCheckedAt: string;
   expiresAt: string;
   segments: Segment[];
@@ -174,6 +188,7 @@ export interface PriceFreshness {
 
 export interface BookingOption {
   id: string;
+  bookingOptionId: string;
   type: BookingOptionType;
   label: string;
   displayName: string | null;
@@ -186,6 +201,7 @@ export interface BookingOption {
   currency: string | null;
   priceStatus: PriceStatus;
   verificationRequired: boolean;
+  supportsPriceVerify: boolean;
   trackingId: string | null;
   lastCheckedAt: string | null;
   expiresAt: string | null;
@@ -251,6 +267,7 @@ export interface PreBookingVerificationRequest {
 }
 
 export interface PreBookingVerificationResponse {
+  bookingOptionId: string;
   stillAvailable: boolean;
   currentPrice: number | null;
   previousPrice: number | null;
@@ -259,7 +276,7 @@ export interface PreBookingVerificationResponse {
   bookingUrl: string | null;
   checkedAt: string;
   expiresAt: string | null;
-  status: VerificationStatus;
+  status: PreBookingStatus;
   message: string;
   canContinue: boolean;
   requiresPriceCheck: boolean;
@@ -291,7 +308,7 @@ export interface SupplierCapabilities {
 }
 
 export interface SearchMetadata {
-  mode: "mock" | "live";
+  mode: "mock" | "sandbox" | "live";
   demoData: boolean;
   searchedOriginAirports: string[];
   searchedDestinationAirports: string[];

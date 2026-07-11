@@ -67,6 +67,7 @@ footer { margin-top:auto; padding:28px max(24px,calc((100vw - 1220px)/2)); borde
 .feature-tag { background:var(--navy); color:#fff; } .type-protected { background:#e2f4ef; color:#1e6f5e; } .type-split { background:#fff0e3; color:#a34c17; }
 .card-route h3 { margin:0; font-size:26px; letter-spacing:-.035em; } .card-route h3 span { padding:0 9px; color:var(--coral); } .card-route h3 em { color:var(--muted); font-size:.65em; font-style:normal; }
 .airport-route { display:flex; flex-wrap:wrap; gap:7px; margin-top:8px; color:var(--muted); font-size:12px; } .airport-route span { display:flex; gap:7px; } .airport-route b { color:var(--coral); }
+.operating-carrier { margin:7px 0 0; color:var(--muted); font-size:11px; }
 .card-price { text-align:right; flex:none; } .card-price small,.card-price span { display:block; } .card-price small { color:var(--muted); font-size:10px; text-transform:uppercase; letter-spacing:.08em; }
 .card-price strong { display:block; margin:3px 0; font-size:34px; letter-spacing:-.04em; } .card-price span { color:var(--muted); font-size:12px; font-weight:800; } .card-price .saving-positive { color:var(--green); }
 .card-facts { display:grid; grid-template-columns:repeat(4,1fr); gap:12px; margin-top:22px; padding:18px 0; border-top:1px solid var(--line); border-bottom:1px solid var(--line); }

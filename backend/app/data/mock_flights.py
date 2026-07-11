@@ -26,7 +26,7 @@ MOCK_FLIGHTS = [
     MockFlight("direct-mu", "MEL", "PVG", 11, 0, 630, "MU", "MU738", 1120, Supplier.mock_sky, True, True),
     MockFlight("direct-qf", "MEL", "PVG", 9, 20, 650, "QF", "QF129", 1260, Supplier.demo_air, True, True, 0, False),
     MockFlight("direct-sha", "MEL", "SHA", 10, 5, 660, "MU", "MU740", 1160, Supplier.mock_sky, True, True, 45),
-    MockFlight("mel-bkk", "MEL", "BKK", 7, 0, 570, "TG", "TG466", 390, Supplier.mock_sky),
+    MockFlight("mel-bkk", "MEL", "BKK", 7, 0, 570, "TG", "TG466", 390, Supplier.mock_sky, True, False, -20),
     MockFlight("bkk-pvg", "BKK", "PVG", 20, 30, 255, "FM", "FM854", 330, Supplier.budget_demo, False),
     MockFlight("bkk-sha", "BKK", "SHA", 22, 0, 250, "MU", "MU548", 345, Supplier.demo_air),
     MockFlight("mel-sin", "MEL", "SIN", 6, 10, 470, "SQ", "SQ238", 440, Supplier.demo_air),

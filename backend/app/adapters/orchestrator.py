@@ -6,7 +6,7 @@ from datetime import date, datetime, timezone
 
 import httpx
 
-from app.adapters.base import AdapterNotConfiguredError, SupplierAdapter
+from app.adapters.base import AdapterNotConfiguredError, SupplierAdapter, SupplierAdapterError
 from app.cache import RedisCache, flight_cache_key
 from app.models import (
     Cabin,
@@ -21,6 +21,7 @@ from app.models import (
     SupplierResult,
     SupplierSearchOutcome,
     VerifyPriceResult,
+    VerificationStatus,
 )
 
 
@@ -37,20 +38,22 @@ def sanitize_error_message(message: str) -> str:
 
 
 def supplier_error_code(exception: Exception) -> tuple[str, bool]:
+    if isinstance(exception, SupplierAdapterError):
+        return exception.code, exception.retryable
     if isinstance(exception, (TimeoutError, httpx.TimeoutException)):
-        return "supplier_timeout", True
+        return "SUPPLIER_TIMEOUT", True
     if isinstance(exception, httpx.HTTPStatusError):
         status = exception.response.status_code
         if status == 429:
-            return "supplier_rate_limited", True
+            return "SUPPLIER_RATE_LIMITED", True
         if status in {401, 403}:
-            return "supplier_auth_error", False
-        return "supplier_http_error", status >= 500
+            return "SUPPLIER_AUTH_FAILED", False
+        return "SUPPLIER_UNAVAILABLE" if status >= 500 else "SUPPLIER_INVALID_RESPONSE", status >= 500
     if isinstance(exception, AdapterNotConfiguredError):
-        return "supplier_not_configured", False
+        return "SUPPLIER_AUTH_FAILED", False
     if isinstance(exception, (TypeError, ValueError)):
-        return "supplier_invalid_response", False
-    return type(exception).__name__, False
+        return "SUPPLIER_INVALID_RESPONSE", False
+    return "SUPPLIER_UNAVAILABLE", False
 
 
 @dataclass(frozen=True)
@@ -68,12 +71,23 @@ class SupplierOrchestrator:
         max_offers_per_supplier_leg: int = 30,
         cache: RedisCache | None = None,
         max_concurrent_requests: int = 8,
+        supplier_mode: str | None = None,
     ):
         self.adapters = tuple(adapters)
         self.supplier_timeout_seconds = supplier_timeout_seconds
         self.max_offers_per_supplier_leg = max_offers_per_supplier_leg
         self.cache = cache
         self.max_concurrent_requests = max(1, max_concurrent_requests)
+        inferred_mode = "mock" if any(
+            adapter.name in {Supplier.mock_sky, Supplier.demo_air, Supplier.budget_demo}
+            for adapter in self.adapters
+        ) else next(
+            (str(getattr(adapter, "runtime_mode")) for adapter in self.adapters if getattr(adapter, "runtime_mode", None) in {"sandbox", "live"}),
+            "live",
+        )
+        self.supplier_mode = supplier_mode or inferred_mode
+        if self.supplier_mode not in {"mock", "sandbox", "live"}:
+            raise ValueError("supplier_mode must be mock, sandbox, or live")
         # TestClient and production workers may execute requests on different event loops.
         # A process-local threading semaphore safely limits the blocking supplier calls
         # without becoming bound to the first asyncio loop that uses this service.
@@ -229,7 +243,7 @@ class SupplierOrchestrator:
                 supplier=adapter.name,
                 origin=origin,
                 destination=destination,
-                code="supplier_timeout",
+                code="SUPPLIER_TIMEOUT",
                 message=f"{adapter.name.value} exceeded the supplier timeout.",
             )
             supplier_error = SupplierError(
@@ -292,7 +306,25 @@ class SupplierOrchestrator:
             raise ValueError(f"Unknown supplier: {supplier.value}")
         if not adapter.capabilities.supports_price_verify:
             return adapter.verify_price_result(offer_id)
-        return adapter.verify_price_result(offer_id)
+        try:
+            return adapter.verify_price_result(offer_id)
+        except SupplierAdapterError as exception:
+            status = (
+                VerificationStatus.timeout
+                if exception.code == "SUPPLIER_TIMEOUT"
+                else VerificationStatus.not_configured
+                if exception.code == "SUPPLIER_AUTH_FAILED"
+                else VerificationStatus.unavailable
+            )
+            return VerifyPriceResult(
+                offer_id=offer_id,
+                supplier=supplier,
+                status=status,
+                price_status=PriceStatus.unavailable,
+                supported=True,
+                checked_at=datetime.now(timezone.utc),
+                message=exception.code,
+            )
 
     def capabilities_for(self, supplier: Supplier):
         adapter = next((item for item in self.adapters if item.name == supplier), None)

@@ -1,6 +1,8 @@
 from dataclasses import replace
+from datetime import datetime, timezone
 
 from fastapi.testclient import TestClient
+import pytest
 from sqlalchemy import select
 
 import app.main as main_module
@@ -8,6 +10,15 @@ from app.config import Settings
 from app.db import SessionLocal
 from app.db_models import SearchEventRecord
 from app.main import app, build_supplier_adapters
+from app.models import (
+    BookingOption,
+    BookingOptionType,
+    PriceStatus,
+    Supplier,
+    SupplierCapabilities,
+    VerificationStatus,
+    VerifyPriceResult,
+)
 
 
 client = TestClient(app)
@@ -109,17 +120,15 @@ def test_search_api_uses_camel_case_contract() -> None:
     assert body["cheapestSplit"]["priceFreshness"]["lastCheckedAt"] == body["cheapestSplit"]["lastCheckedAt"]
     assert body["cheapestSplit"]["priceFreshness"]["expiresAt"] == body["cheapestSplit"]["expiresAt"]
     assert body["cheapestSplit"]["priceFreshness"]["isExpired"] is False
-    trip_option = next(
-        option for option in body["cheapestSplit"]["bookingOptions"]
-        if option["label"] == "Check on Trip.com"
-    )
-    assert trip_option["priceStatus"] == "redirect_only"
-    assert trip_option["priceAmount"] is None
-    assert "tracking_id=splitfare_demo" in trip_option["url"]
+    options = body["cheapestSplit"]["bookingOptions"]
+    assert options
+    assert all(option["bookingOptionId"] == option["id"] for option in options)
+    assert all(option["supportsPriceVerify"] is True for option in options)
+    assert all(option["supplier"] not in {"TripComAffiliate", "Skyscanner"} for option in options)
     assert body["metadata"]["demoData"] is True
     assert body["metadata"]["mode"] == "mock"
     assert body["metadata"]["supplierQueryCount"] <= body["metadata"]["supplierQueryLimit"]
-    assert body["cheapestSplit"]["priceSourceCoverage"]["checkRequiredSupplierCount"] >= 1
+    assert body["cheapestSplit"]["priceSourceCoverage"]["confirmedSupplierCount"] >= 1
     assert body["results"]["baselinePrice"] == body["baseline"]["totalPrice"]
     assert body["results"]["protectedItineraries"]
     assert body["results"]["splitTicketItineraries"]
@@ -197,15 +206,25 @@ def test_duffel_verify_endpoint_exists_in_mock_mode() -> None:
     assert body["isConfirmed"] is False
 
 
-def test_live_duffel_adapter_is_only_enabled_when_token_exists() -> None:
+def test_duffel_adapter_capability_follows_explicit_supplier_mode() -> None:
     mock_mode = build_supplier_adapters(Settings(duffel_api_token=None))
-    live_mode = build_supplier_adapters(Settings(
-        enable_mock_supplier=False, duffel_api_token="duffel_test_token"
+    sandbox_mode = build_supplier_adapters(Settings(
+        enable_mock_supplier=False, duffel_mode="sandbox", duffel_api_token="duffel_test_token"
     ))
     mock_duffel = next(adapter for adapter in mock_mode if adapter.name.value == "Duffel")
-    live_duffel = next(adapter for adapter in live_mode if adapter.name.value == "Duffel")
+    sandbox_duffel = next(adapter for adapter in sandbox_mode if adapter.name.value == "Duffel")
     assert mock_duffel.capabilities.supports_search is False
-    assert live_duffel.capabilities.supports_search is True
+    assert sandbox_duffel.capabilities.supports_search is True
+
+
+def test_live_mode_adapter_list_contains_no_mock_search_supplier() -> None:
+    adapters = build_supplier_adapters(Settings(
+        enable_mock_supplier=False,
+        duffel_mode="live",
+        duffel_api_token="duffel_live_authorised_fixture",
+    ))
+    searchable = {adapter.name for adapter in adapters if adapter.capabilities.supports_search}
+    assert searchable == {main_module.Supplier.duffel}
 
 
 def _booking_option(search_response, offer_fragment: str):
@@ -253,8 +272,8 @@ def test_pre_booking_verification_uses_canonical_option_and_records_events() -> 
         events = session.scalars(
             select(SearchEventRecord).where(SearchEventRecord.search_id == search_id)
         ).all()
-        assert "booking.clicked" in {event.event_type for event in events}
-        assert "booking.verification_completed" in {event.event_type for event in events}
+        event_types = {event.event_type for event in events}
+        assert {"booking_option_clicked", "verification_started", "verification_succeeded"} <= event_types
     finally:
         session.close()
 
@@ -271,6 +290,7 @@ def test_pre_booking_price_changed_uses_supplier_result() -> None:
     body = response.json()
     assert body["priceChanged"] is True
     assert body["currentPrice"] == body["previousPrice"] + 45
+    assert body["status"] == "increased"
 
 
 def test_pre_booking_unavailable_disables_continue() -> None:
@@ -289,14 +309,22 @@ def test_pre_booking_unavailable_disables_continue() -> None:
     assert body["currentPrice"] is None
 
 
-def test_trip_com_pre_booking_requires_provider_price_check() -> None:
+def test_unsupported_verification_requires_explicit_provider_confirmation() -> None:
     search_response = _search_response()
-    itinerary = search_response["results"]["rankedResults"][0]
-    option = next(item for item in itinerary["bookingOptions"] if item["type"] == "trip_com")
+    search_id = search_response["searchId"]
+    itinerary_id = search_response["results"]["rankedResults"][0]["id"]
+    option = BookingOption(
+        id="redirect-only", type=BookingOptionType.supplier, label="Provider redirect",
+        supplier=Supplier.mock_sky, url="http://localhost:9999/book",
+        priceStatus=PriceStatus.redirect_only,
+        capabilities=SupplierCapabilities(supports_booking_url=True),
+        verificationRequired=False,
+    )
+    main_module.service._booking_registry[search_id][option.id] = (itinerary_id, option)
     response = client.post("/api/booking-options/verify", json={
-        "searchId": search_response["searchId"],
-        "itineraryId": itinerary["id"],
-        "bookingOptionId": option["id"],
+        "searchId": search_id,
+        "itineraryId": itinerary_id,
+        "bookingOptionId": option.id,
     })
     assert response.status_code == 200
     body = response.json()
@@ -306,6 +334,61 @@ def test_trip_com_pre_booking_requires_provider_price_check() -> None:
     assert body["currentPrice"] is None
     assert body["priceChanged"] is False
     assert body["status"] == "unsupported"
+    assert body["message"] == "VERIFY_UNSUPPORTED"
+    redirect = client.post("/api/booking-options/redirect-confirmed", json={
+        "searchId": search_id,
+        "itineraryId": itinerary_id,
+        "bookingOptionId": option.id,
+    })
+    assert redirect.status_code == 200
+    assert redirect.json()["bookingUrl"] == "http://localhost:9999/book"
+    session = SessionLocal()
+    try:
+        events = session.scalars(
+            select(SearchEventRecord).where(SearchEventRecord.search_id == search_id)
+        ).all()
+        event_types = {event.event_type for event in events}
+        assert {"booking_option_clicked", "verification_failed", "provider_redirect_confirmed"} <= event_types
+    finally:
+        session.close()
+
+
+def test_pre_booking_price_decreased_is_bound_to_canonical_option() -> None:
+    search_response = _search_response()
+    itinerary, option = _booking_option(search_response, "mel-bkk")
+    body = client.post("/api/booking-options/verify", json={
+        "searchId": search_response["searchId"], "itineraryId": itinerary["id"],
+        "bookingOptionId": option["id"],
+    }).json()
+    assert body["status"] == "decreased"
+    assert body["currentPrice"] == body["previousPrice"] - 20
+
+
+@pytest.mark.parametrize(
+    ("supplier_status", "expected"),
+    [(VerificationStatus.timeout, "timeout"), (VerificationStatus.expired, "expired")],
+)
+def test_pre_booking_maps_timeout_and_expired_without_confirming(
+    monkeypatch, supplier_status: VerificationStatus, expected: str
+) -> None:
+    search_response = _search_response()
+    itinerary, option = _booking_option(search_response, "direct-mu")
+    monkeypatch.setattr(
+        main_module.supplier_orchestrator,
+        "verify_price",
+        lambda *_: VerifyPriceResult(
+            offerId=option["offerId"], supplier=Supplier.mock_sky,
+            status=supplier_status, checkedAt=datetime.now(timezone.utc), message="internal",
+        ),
+    )
+    body = client.post("/api/booking-options/verify", json={
+        "searchId": search_response["searchId"], "itineraryId": itinerary["id"],
+        "bookingOptionId": option["id"],
+    }).json()
+    assert body["status"] == expected
+    assert body["stillAvailable"] is False
+    assert body["canContinue"] is False
+    assert body["bookingUrl"] is None
 
 
 def test_pre_booking_rejects_client_supplied_redirect_url() -> None:

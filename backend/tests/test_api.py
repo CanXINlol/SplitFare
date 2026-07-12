@@ -51,6 +51,23 @@ def test_city_catalog_api_exposes_the_authoritative_hierarchy() -> None:
     assert any(city["cityId"] == "city:shanghai-cn" for city in body["cities"])
 
 
+def test_route_discovery_api_has_no_supplier_prices_or_fake_flights() -> None:
+    response = client.post("/api/routes/discover", json={
+        "originCityId": "city:melbourne-au", "destinationCityId": "city:shanghai-cn",
+        "departureDate": "2026-08-12", "minGapHours": 3, "maxGapHours": 12,
+        "passengers": 1, "cabin": "economy", "sort": "best_route",
+    })
+    assert response.status_code == 200
+    body = response.json()
+    assert body["routes"] and body["metadata"]["priceDataAvailable"] is False
+    serialized = response.text
+    assert "priceAmount" not in serialized
+    assert "confirmed" not in serialized
+    assert "flightNumber" not in serialized
+    assert "example.com" not in serialized
+    assert all(link["linkType"] == "manual_search_required" for route in body["routes"] for link in route["firstLegLinks"])
+
+
 def test_old_place_endpoints_are_removed() -> None:
     assert client.get("/api/places/search", params={"q": "Melbourne"}).status_code == 404
     assert client.post("/api/places/resolve", json={"placeId": "airport:PVG"}).status_code == 404

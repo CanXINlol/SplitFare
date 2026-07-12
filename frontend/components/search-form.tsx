@@ -8,9 +8,9 @@ import { CitySelector } from "./city-selector";
 import { useCityCatalog } from "@/lib/city-catalog";
 import { useI18n } from "@/lib/i18n";
 import { searchSchema, type SearchInput } from "@/lib/schema";
-import { Cabin, SortOption } from "@/lib/types";
+import { Cabin, RouteSort } from "@/lib/types";
 
-const SEARCH_STORAGE_KEY = "splitfare:search:v2";
+const SEARCH_STORAGE_KEY = "splitfare:route-search:v3";
 
 export function SearchForm() {
   const router = useRouter();
@@ -24,8 +24,7 @@ export function SearchForm() {
     defaultValues: {
       originCityId: "city:melbourne-au", destinationCityId: "city:shanghai-cn", departureDate: defaultDate,
       minGapHours: 3, maxGapHours: 12, passengers: 1, cabin: Cabin.Economy, maxResults: 20,
-      sort: SortOption.Value, checkedBaggageLikelyRequired: false, visaTransitRequirementUnknown: true,
-      currency: "AUD", promoCodeNote: "", memberPriceNote: "",
+      sort: RouteSort.BestRoute,
     },
   });
   const originCityId = watch("originCityId");
@@ -70,10 +69,9 @@ export function SearchForm() {
         <label><span>{t("search.departure")}</span><input type="date" min={new Date().toISOString().slice(0, 10)} {...register("departureDate")} /></label>
         <label><span>{t("search.passengers")}</span><select {...register("passengers")}>{[1,2,3,4,5,6,7,8,9].map((n) => <option key={n} value={n}>{n}</option>)}</select></label>
         <label><span>{t("search.cabin")}</span><select {...register("cabin")}>{Object.values(Cabin).map((value) => <option key={value} value={value}>{t(`common.${value}`)}</option>)}</select></label>
-        <label><span>{t("search.sort")}</span><select {...register("sort")}><option value={SortOption.Value}>{t("search.value")}</option><option value={SortOption.Cheapest}>{t("search.cheapest")}</option></select></label>
+        <label><span>{t("search.sort")}</span><select {...register("sort")}><option value={RouteSort.BestRoute}>{t("search.bestRoute")}</option><option value={RouteSort.LowestRisk}>{t("search.lowestRisk")}</option><option value={RouteSort.ShortestDetour}>{t("search.shortestDetour")}</option><option value={RouteSort.SimplestTransfer}>{t("search.simplestTransfer")}</option></select></label>
         <label><span>{t("search.minGap")}</span><div className="unit-field"><input type="number" min="1" max="24" {...register("minGapHours")} /><small>{t("search.hours")}</small></div></label>
         <label><span>{t("search.maxGap")}</span><div className="unit-field"><input type="number" min="1" max="36" {...register("maxGapHours")} /><small>{t("search.hours")}</small></div></label>
-        <label className="check-field"><input type="checkbox" {...register("checkedBaggageLikelyRequired")} /><span>{t("search.baggage")}</span></label>
         <button className="button-primary" type="submit" disabled={navigating || catalogLoading || catalogError}>{navigating ? t("search.loading") : t("search.submit")}<span>→</span></button>
       </div>
     </form>

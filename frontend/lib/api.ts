@@ -4,6 +4,8 @@ import type {
   PreBookingVerificationRequest,
   PreBookingVerificationResponse,
   SearchResponse,
+  SearchRequest,
+  RouteDiscoveryResponse,
 } from "./types";
 
 const configuredApiUrl = process.env.NEXT_PUBLIC_API_BASE_URL;
@@ -12,6 +14,7 @@ if (process.env.NEXT_PUBLIC_APP_ENV === "production" && !configuredApiUrl) {
 }
 const API_URL = (configuredApiUrl ?? "http://localhost:8000").replace(/\/$/, "");
 const searchRequestCache = new Map<string, Promise<SearchResponse>>();
+const routeDiscoveryCache = new Map<string, Promise<RouteDiscoveryResponse>>();
 const apiProtocol = new URL(API_URL).protocol;
 if (apiProtocol !== "http:" && apiProtocol !== "https:") {
   throw new Error("NEXT_PUBLIC_API_BASE_URL must use http or https.");
@@ -36,7 +39,7 @@ async function responseError(response: Response, fallback: string): Promise<Erro
   return new Error(body?.error?.code ?? body?.detail ?? fallback);
 }
 
-export async function searchFlights(input: SearchInput, signal?: AbortSignal): Promise<SearchResponse> {
+export async function searchFlights(input: SearchRequest, signal?: AbortSignal): Promise<SearchResponse> {
   const key = JSON.stringify(input);
   let request = searchRequestCache.get(key);
   if (!request) {
@@ -53,6 +56,29 @@ export async function searchFlights(input: SearchInput, signal?: AbortSignal): P
     });
     searchRequestCache.set(key, request);
     if (searchRequestCache.size > 12) searchRequestCache.delete(searchRequestCache.keys().next().value!);
+  }
+  const result = await request;
+  if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
+  return result;
+}
+
+export async function discoverRoutes(input: SearchInput, signal?: AbortSignal): Promise<RouteDiscoveryResponse> {
+  const key = JSON.stringify(input);
+  let request = routeDiscoveryCache.get(key);
+  if (!request) {
+    request = apiFetch("/api/routes/discover", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: key,
+    }).then(async (response) => {
+      if (!response.ok) throw await responseError(response, "route_discovery_failed");
+      return response.json() as Promise<RouteDiscoveryResponse>;
+    }).catch((error: unknown) => {
+      routeDiscoveryCache.delete(key);
+      throw error;
+    });
+    routeDiscoveryCache.set(key, request);
+    if (routeDiscoveryCache.size > 12) routeDiscoveryCache.delete(routeDiscoveryCache.keys().next().value!);
   }
   const result = await request;
   if (signal?.aborted) throw new DOMException("Aborted", "AbortError");

@@ -108,6 +108,19 @@ class PriceStatus(str, Enum):
     unavailable = "unavailable"
 
 
+class RouteSort(str, Enum):
+    best_route = "best_route"
+    lowest_risk = "lowest_risk"
+    shortest_detour = "shortest_detour"
+    simplest_transfer = "simplest_transfer"
+
+
+class ProviderLinkType(str, Enum):
+    flight_search = "flight_search"
+    provider_homepage = "provider_homepage"
+    manual_search_required = "manual_search_required"
+
+
 class SearchStatus(str, Enum):
     complete = "complete"
     partial = "partial"
@@ -223,6 +236,31 @@ class SearchRequest(ApiModel):
         if self.candidate_hubs:
             if any(len(hub) != 3 or not hub.isalpha() for hub in self.candidate_hubs):
                 raise ValueError("candidate hubs must be three-letter IATA codes")
+        return self
+
+
+class RouteDiscoveryRequest(ApiModel):
+    origin_city_id: str = Field(pattern=r"^city:[a-z0-9-]+$")
+    destination_city_id: str = Field(pattern=r"^city:[a-z0-9-]+$")
+    departure_date: date
+    min_gap_hours: float = Field(ge=1, le=24)
+    max_gap_hours: float = Field(ge=1, le=36)
+    passengers: int = Field(ge=1, le=9)
+    cabin: Cabin = Cabin.economy
+    max_results: int = Field(default=20, ge=1, le=50)
+    sort: RouteSort = RouteSort.best_route
+
+    @field_validator("origin_city_id", "destination_city_id", mode="before")
+    @classmethod
+    def normalize_city_id(cls, value: object) -> object:
+        return value.strip().lower() if isinstance(value, str) else value
+
+    @model_validator(mode="after")
+    def validate_request(self) -> RouteDiscoveryRequest:
+        if self.origin_city_id == self.destination_city_id:
+            raise ValueError("origin and destination cities must differ")
+        if self.max_gap_hours < self.min_gap_hours:
+            raise ValueError("max_gap_hours must be greater than or equal to min_gap_hours")
         return self
 
 
@@ -759,3 +797,100 @@ class SearchResponse(ApiModel):
     supplier_failures: list[SupplierFailure] = Field(default_factory=list)
     metadata: SearchMetadata
     disclaimer: str = Field(min_length=1)
+
+
+class ProviderSearchLink(ApiModel):
+    id: str = Field(min_length=1)
+    provider: str = Field(pattern=r"^[a-z0-9-]+$")
+    provider_display_name: str = Field(min_length=1)
+    origin_airport: str = Field(pattern=r"^[A-Z]{3}$")
+    destination_airport: str = Field(pattern=r"^[A-Z]{3}$")
+    departure_date: date
+    passengers: int = Field(ge=1, le=9)
+    cabin: Cabin
+    search_url: HttpUrl | None = None
+    link_type: ProviderLinkType
+    supported_locale: list[str] = Field(min_length=1)
+    warnings: list[str] = Field(default_factory=list)
+
+    @field_validator("search_url")
+    @classmethod
+    def require_https(cls, value: HttpUrl | None) -> HttpUrl | None:
+        if value is not None and value.scheme != "https":
+            raise ValueError("provider search links must use HTTPS")
+        return value
+
+
+class RouteRisk(ApiModel):
+    structural_score: int = Field(ge=0, le=100)
+    level: RiskLevel
+    structural_warnings: list[str]
+    schedule_dependent_warnings: list[str]
+    unknown_warnings: list[str]
+
+    @model_validator(mode="after")
+    def validate_level(self) -> RouteRisk:
+        if self.level != risk_level_for_score(self.structural_score):
+            raise ValueError("route risk level must match structural score")
+        return self
+
+
+class CandidateRoute(ApiModel):
+    id: str
+    signature: str
+    candidate_route: bool = True
+    origin_city_id: str
+    destination_city_id: str
+    origin_airport: str = Field(pattern=r"^[A-Z]{3}$")
+    hub_city_id: str
+    hub_arrival_airport: str = Field(pattern=r"^[A-Z]{3}$")
+    hub_departure_airport: str = Field(pattern=r"^[A-Z]{3}$")
+    destination_airport: str = Field(pattern=r"^[A-Z]{3}$")
+    departure_date: date
+    suggested_min_gap_hours: float = Field(ge=1)
+    suggested_max_gap_hours: float = Field(ge=1)
+    separate_ticket_count: int = Field(default=2, ge=2, le=2)
+    requires_baggage_recheck: bool = True
+    may_require_immigration: bool = True
+    cross_airport: bool = False
+    direct_distance_km: int = Field(gt=0)
+    split_distance_km: int = Field(gt=0)
+    detour_ratio: float = Field(ge=1)
+    detour_level: str = Field(pattern=r"^(low|moderate|high)$")
+    route_score: float = Field(ge=0, le=100)
+    risk: RouteRisk
+    recommendation_reasons: list[str]
+    first_leg_links: list[ProviderSearchLink] = Field(min_length=1)
+    second_leg_links: list[ProviderSearchLink] = Field(min_length=1)
+    full_route_links: list[ProviderSearchLink] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_route(self) -> CandidateRoute:
+        if len({self.origin_airport, self.destination_airport}) < 2:
+            raise ValueError("route endpoints must differ")
+        if self.origin_airport in {self.hub_arrival_airport, self.hub_departure_airport}:
+            raise ValueError("origin airport cannot be a hub airport")
+        if self.destination_airport in {self.hub_arrival_airport, self.hub_departure_airport}:
+            raise ValueError("destination airport cannot be a hub airport")
+        if self.cross_airport != (self.hub_arrival_airport != self.hub_departure_airport):
+            raise ValueError("cross_airport must match the hub airports")
+        if self.suggested_max_gap_hours < self.suggested_min_gap_hours:
+            raise ValueError("suggested gap range is invalid")
+        return self
+
+
+class RouteDiscoveryMetadata(ApiModel):
+    origin_airports: list[str]
+    destination_airports: list[str]
+    selected_hubs: list[str]
+    generated_route_count: int = Field(ge=0)
+    filtered_extreme_detour_count: int = Field(ge=0)
+    price_data_available: bool = False
+
+
+class RouteDiscoveryResponse(ApiModel):
+    discovery_id: str
+    status: SearchStatus
+    routes: list[CandidateRoute]
+    metadata: RouteDiscoveryMetadata
+    disclaimer_code: str = "ROUTE_DISCOVERY_NO_LIVE_PRICES"

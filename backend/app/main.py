@@ -24,6 +24,8 @@ from app.models import (
     PreBookingVerificationResponse,
     PreBookingStatus,
     PriceStatus,
+    RouteDiscoveryRequest,
+    RouteDiscoveryResponse,
     SearchRequest,
     SearchResponse,
     VerificationStatus,
@@ -34,6 +36,7 @@ from app.cities import city_service
 from app.repositories import SearchPersistenceService
 from app.search import SearchService
 from app.search_orchestrator import SearchOrchestrator
+from app.route_discovery import discover_routes
 
 
 settings = load_settings()
@@ -131,7 +134,7 @@ def error_response(
 @app.middleware("http")
 async def request_context_and_rate_limit(request: Request, call_next):
     request.state.request_id = str(uuid4())
-    if request.url.path == "/api/search" and request.method == "POST":
+    if request.url.path in {"/api/search", "/api/routes/discover"} and request.method == "POST":
         client = request.client.host if request.client else "unknown"
         now = time.monotonic()
         window_start = now - 60
@@ -218,6 +221,17 @@ async def search(request: SearchRequest, debug: bool = False) -> JSONResponse:
         return JSONResponse(payload if allow_debug else remove_raw_payload(payload))
     except ValueError as error:
         code = str(error) if str(error) in {"invalid_city_id", "city_has_no_airports"} else "search_invalid"
+        raise HTTPException(status_code=422, detail=code) from error
+
+
+@app.post("/api/routes/discover", response_model=RouteDiscoveryResponse)
+def route_discovery(request: RouteDiscoveryRequest) -> RouteDiscoveryResponse:
+    try:
+        return discover_routes(request)
+    except ValueError as error:
+        code = str(error) if str(error) in {
+            "invalid_city_id", "city_has_no_airports", "airport_coordinates_unavailable"
+        } else "route_discovery_invalid"
         raise HTTPException(status_code=422, detail=code) from error
 
 

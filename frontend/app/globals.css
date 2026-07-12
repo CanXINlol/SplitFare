@@ -95,12 +95,29 @@ footer { margin-top:auto; padding:28px max(24px,calc((100vw - 1220px)/2)); borde
 .state-message h1 { margin:20px 0 8px; font-size:34px; } .state-message p { margin:0 0 24px; color:var(--muted); max-width:560px; }
 .loader,.page-fallback { display:flex; gap:8px; justify-content:center; } .loader i,.page-fallback i { width:12px; height:12px; border-radius:50%; background:var(--coral); animation:pulse 1s infinite alternate; } .loader i:nth-child(2),.page-fallback i:nth-child(2) { animation-delay:.2s; } .loader i:nth-child(3),.page-fallback i:nth-child(3) { animation-delay:.4s; }
 .page-fallback { min-height:50vh; align-items:center; } .results-disclaimer { margin-top:32px; padding:18px; border-radius:14px; background:var(--navy); color:rgba(255,255,255,.66); font-size:12px; line-height:1.6; }
+.route-disclaimer { margin-top:20px; padding:16px 18px; border-radius:14px; background:#fff8e7; border:1px solid #ecd6a7; color:#795410; font-weight:750; }
+.route-list { display:grid; gap:20px; }
+.route-card { position:relative; border:1px solid var(--line); border-radius:22px; background:#fff; padding:26px; box-shadow:0 8px 28px rgba(7,36,52,.055); }
+.route-rank { position:absolute; right:18px; top:14px; color:#a7b3b7; font-weight:900; font-size:12px; }
+.route-card-head { display:flex; justify-content:space-between; gap:20px; align-items:flex-start; padding-right:38px; }
+.route-card-head .type-split { display:inline-block; padding:5px 8px; border-radius:6px; font-size:10px; font-weight:900; letter-spacing:.06em; text-transform:uppercase; }
+.route-card-head h2 { margin:12px 0 0; font-size:24px; letter-spacing:-.035em; } .route-card-head h2 span { color:var(--coral); } .route-card-head h2 em { color:var(--muted); font-size:.65em; font-style:normal; }
+.route-metrics { display:grid; grid-template-columns:repeat(4,1fr); gap:12px; margin-top:22px; padding:18px 0; border-top:1px solid var(--line); border-bottom:1px solid var(--line); }
+.route-metrics div { padding-right:12px; border-right:1px solid var(--line); } .route-metrics div:last-child { border:0; } .route-metrics small,.route-metrics strong { display:block; } .route-metrics small { color:var(--muted); font-size:10px; text-transform:uppercase; letter-spacing:.08em; } .route-metrics strong { margin-top:6px; font-size:13px; }
+.route-reasons { margin-top:15px; display:flex; flex-wrap:wrap; gap:8px; align-items:center; } .route-reasons>strong { font-size:12px; } .route-reasons span { padding:5px 8px; border-radius:999px; background:#e7f4f1; color:#1e6f5e; font-size:11px; font-weight:800; }
+.provider-links { display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-top:18px; } .provider-leg { padding:16px; border:1px solid var(--line); border-radius:14px; } .provider-leg>strong { display:block; margin-bottom:10px; font-size:13px; } .provider-leg>div { display:flex; flex-wrap:wrap; gap:8px; } .provider-leg button { border:1px solid var(--line); background:#fff; color:var(--navy); border-radius:10px; padding:9px 11px; text-align:left; font-weight:850; cursor:pointer; } .provider-leg button:hover { border-color:var(--coral); } .provider-leg button small { display:block; margin-top:3px; color:var(--muted); font-size:9px; font-weight:600; }
+.route-price-note { color:var(--muted); font-size:12px; line-height:1.5; }
+.manual-workspace { margin-top:20px; padding:20px; border-radius:16px; background:#f5f8f7; border:1px solid var(--line); } .manual-head { display:flex; justify-content:space-between; gap:20px; align-items:end; } .manual-head h3 { margin:5px 0; font-size:24px; } .manual-head p { margin:0; color:var(--muted); font-size:12px; } .manual-head label { font-size:11px; font-weight:800; } .manual-head select { display:block; margin-top:5px; padding:8px; border:1px solid var(--line); border-radius:9px; background:#fff; }
+.manual-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:12px; margin-top:18px; } .manual-grid label { color:var(--muted); font-size:11px; font-weight:800; } .manual-grid input { width:100%; margin-top:6px; padding:11px; border:1px solid var(--line); border-radius:9px; background:#fff; color:var(--navy); }
+.cost-summary { display:grid; grid-template-columns:repeat(4,1fr); gap:10px; margin-top:18px; } .cost-summary div { padding:13px; background:#fff; border-radius:10px; } .cost-summary small,.cost-summary strong { display:block; } .cost-summary small { color:var(--muted); font-size:10px; } .cost-summary strong { margin-top:5px; }
+.decision-note { padding:13px; border-radius:10px; background:#fff8e8; color:#765319; font-size:12px; }
+.manual-actions,.global-manual-actions { display:flex; flex-wrap:wrap; justify-content:flex-end; gap:9px; margin-top:16px; }
 @keyframes pulse { to { transform:translateY(-8px); opacity:.35; } }
 
 @media (max-width:900px) {
   .topbar nav a { display:none; } .hero { padding-top:48px; } .search-grid { grid-template-columns:repeat(2,1fr); }
   .city-columns { grid-template-columns:160px 190px 1fr; } .city-grid { grid-template-columns:1fr; }
-  .card-facts { grid-template-columns:repeat(2,1fr); } .card-facts div:nth-child(2) { border:0; } .booking-grid { grid-template-columns:1fr 1fr; }
+  .card-facts { grid-template-columns:repeat(2,1fr); } .card-facts div:nth-child(2) { border:0; } .booking-grid { grid-template-columns:1fr 1fr; } .manual-grid { grid-template-columns:repeat(2,1fr); }
 }
 @media (max-width:620px) {
   .topbar { height:66px; padding:0 16px; } .brand { font-size:15px; } .brand-mark { width:30px; height:30px; } .language-switch { padding:7px 11px; }
@@ -117,4 +134,5 @@ footer { margin-top:auto; padding:28px max(24px,calc((100vw - 1220px)/2)); borde
   .card-route h3 { font-size:22px; } .card-facts { grid-template-columns:1fr 1fr; } .card-facts div { border:0; } .card-actions { flex-direction:column; } .card-actions button { width:100%; }
   .segment { grid-template-columns:1fr; gap:5px; } .booking-grid { grid-template-columns:1fr; } .section-title p { position:static; margin-top:7px; }
   .price-comparison { grid-template-columns:1fr; } .price-comparison>span { transform:rotate(90deg); }
+  .route-card { padding:20px 16px; } .route-card-head { display:block; padding-right:20px; } .route-card-head>.risk-pill { margin-top:14px; } .route-metrics { grid-template-columns:1fr 1fr; } .route-metrics div { border:0; } .provider-links { grid-template-columns:1fr; } .manual-head { display:block; } .manual-head label { display:block; margin-top:14px; } .manual-grid,.cost-summary { grid-template-columns:1fr 1fr; }
 }

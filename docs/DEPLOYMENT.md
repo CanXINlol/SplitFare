@@ -1,6 +1,8 @@
 # Deployment Guide
 
-SplitFare 当前可部署为 production-like demo 或 live-mode shell。没有真实 supplier credential 时，production live 会正常返回 empty results，不会静默 fallback 到 mock。
+SplitFare 当前主产品是零成本路线发现与浏览器本地手动比价。生产前端调用 `/api/routes/discover`，该接口不需要航班供应商凭证、不抓取第三方页面，也不返回实时价格。旧 supplier 模式仅为隔离的兼容能力。
+
+生产发布应保持第三方平台入口为公开 HTTPS 搜索页，并在发布前人工复核 `backend/app/data/provider_search.py`。不要把旧 `/api/search` 的 Mock 价格重新接回当前结果页。
 
 ## Deployment modes
 

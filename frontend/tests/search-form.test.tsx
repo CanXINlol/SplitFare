@@ -59,10 +59,10 @@ describe("structured city search", () => {
 
   it("submits city ids and versioned browser state", async () => {
     renderForm();
-    fireEvent.click(await screen.findByRole("button", { name: /Compare itineraries/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /Discover routes/ }));
     await waitFor(() => expect(push).toHaveBeenCalled());
     expect(push.mock.calls[0][0]).toContain("originCityId=city%3Amelbourne-au");
-    expect(window.sessionStorage.getItem("splitfare:search:v2")).toContain("city:shanghai-cn");
+    expect(window.sessionStorage.getItem("splitfare:route-search:v3")).toContain("city:shanghai-cn");
   });
 
   it("removes the legacy search-state key", async () => {

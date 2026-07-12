@@ -31,6 +31,19 @@ export enum SortOption {
   Cheapest = "cheapest",
 }
 
+export enum RouteSort {
+  BestRoute = "best_route",
+  LowestRisk = "lowest_risk",
+  ShortestDetour = "shortest_detour",
+  SimplestTransfer = "simplest_transfer",
+}
+
+export enum ProviderLinkType {
+  FlightSearch = "flight_search",
+  ProviderHomepage = "provider_homepage",
+  ManualSearchRequired = "manual_search_required",
+}
+
 export enum SearchStatus {
   Complete = "complete",
   Partial = "partial",
@@ -88,6 +101,18 @@ export interface SearchRequest {
   candidateHubs?: string[];
   promoCodeNote?: string | null;
   memberPriceNote?: string | null;
+}
+
+export interface RouteDiscoveryRequest {
+  originCityId: string;
+  destinationCityId: string;
+  departureDate: string;
+  minGapHours: number;
+  maxGapHours: number;
+  passengers: number;
+  cabin: Cabin;
+  maxResults: number;
+  sort: RouteSort;
 }
 
 export interface CandidateAirport {
@@ -295,6 +320,74 @@ export interface SearchResponse {
   supplierFailures: SupplierFailure[];
   metadata: SearchMetadata;
   disclaimer: string;
+}
+
+export interface ProviderSearchLink {
+  id: string;
+  provider: string;
+  providerDisplayName: string;
+  originAirport: string;
+  destinationAirport: string;
+  departureDate: string;
+  passengers: number;
+  cabin: Cabin;
+  searchUrl: string | null;
+  linkType: ProviderLinkType;
+  supportedLocale: string[];
+  warnings: string[];
+}
+
+export interface RouteRisk {
+  structuralScore: number;
+  level: RiskLevel;
+  structuralWarnings: string[];
+  scheduleDependentWarnings: string[];
+  unknownWarnings: string[];
+}
+
+export interface CandidateRoute {
+  id: string;
+  signature: string;
+  candidateRoute: boolean;
+  originCityId: string;
+  destinationCityId: string;
+  originAirport: string;
+  hubCityId: string;
+  hubArrivalAirport: string;
+  hubDepartureAirport: string;
+  destinationAirport: string;
+  departureDate: string;
+  suggestedMinGapHours: number;
+  suggestedMaxGapHours: number;
+  separateTicketCount: number;
+  requiresBaggageRecheck: boolean;
+  mayRequireImmigration: boolean;
+  crossAirport: boolean;
+  directDistanceKm: number;
+  splitDistanceKm: number;
+  detourRatio: number;
+  detourLevel: "low" | "moderate" | "high";
+  routeScore: number;
+  risk: RouteRisk;
+  recommendationReasons: string[];
+  firstLegLinks: ProviderSearchLink[];
+  secondLegLinks: ProviderSearchLink[];
+  fullRouteLinks: ProviderSearchLink[];
+}
+
+export interface RouteDiscoveryResponse {
+  discoveryId: string;
+  status: SearchStatus;
+  routes: CandidateRoute[];
+  metadata: {
+    originAirports: string[];
+    destinationAirports: string[];
+    selectedHubs: string[];
+    generatedRouteCount: number;
+    filteredExtremeDetourCount: number;
+    priceDataAvailable: false;
+  };
+  disclaimerCode: string;
 }
 
 export interface SupplierCapabilities {
